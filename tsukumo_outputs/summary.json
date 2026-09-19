@@ -1,0 +1,12 @@
+{
+  "market_annual": 2150000.0,
+  "tsukumo_annual": 92880.0,
+  "single_fc_demand_share": 0.4908,
+  "optimized_policy": [
+    {"Market":"Primary","PromiseDays":"2"},
+    {"Market":"Secondary","PromiseDays":"3"},
+    {"Market":"Tertiary","PromiseDays":"4"}
+  ],
+  "optimized_gross_profit": 155940510.69,
+  "note": "Task 9 three-tier storage cost optimization requires class-provided Seasonal and Peak-and-Extreme storage rates."
+}
