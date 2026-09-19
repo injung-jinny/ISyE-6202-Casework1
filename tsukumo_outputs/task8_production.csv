@@ -1,0 +1,5 @@
+Strategy,MaxDailyProduction,MaxBacklog,Preproduction,MaxDCInventory
+Pursuit,7365.15,0,0,
+Full smoothing - no preproduction,283.1878,10321.36,0,
+Full smoothing - with preproduction,283.1878,0,10321.36,28399.99
+Segmented smoothing (4),319.49,0,11069.12,28503.84
