@@ -18,7 +18,7 @@ Place the six course CSV files in the repository root before running:
 - `zip3_pmf.csv`
 
 ## Task-to-data relationship
-Task 1 combines ZIP3 PMF, market classification, MSA/state attributes, seasonal demand, and ZIP3 coordinates to describe demand geographically and temporally.
+Task 1 computes deterministic overall U.S. market demand (Tsukumo + competitors) with no seasonality or uncertainty. The selected submission combinations are Y-A-# (USA annual units), Y-B-# (annual units by market type), Y-C-# (annual units by state), and Y-D-# (annual units by ZIP3). ZIP3 PMF allocates the 2.15 million-unit annual U.S. market spatially.
 Task 2 applies inverse-transform sampling to market-growth and share-growth triangular distributions and adds weekly, daily, and ZIP3 uncertainty.
 Task 3 uses the 15-FC columns in `fc_zip3_distance.csv` for closest-FC assignment and distance-zone analysis; ZIP3 coordinates provide the geographic cluster map.
 Task 4 forms eligible multi-source FC sets using the closest distance bucket and next higher bucket, then uses coordinates for fulfillment-cluster maps.
@@ -29,7 +29,7 @@ Task 9 combines robust throughput, replenishment simulation, lead times, and res
 Task 10 compares a uniform replenishment policy with FC-specific intervals and autonomy thresholds.
 
 ## Coordinate-file use
-`zip3_coordinates.csv` is used for geographic visualization in Tasks 1, 3, and 4. The case-provided `fc_zip3_distance.csv` remains the authoritative source for FC-to-ZIP3 mileage, closest-FC assignment, shipping distance zones, and OTD economics.
+`zip3_coordinates.csv` is used for geographic visualization in Tasks 1, 3, and 4. Map figures draw the contiguous U.S. boundary prominently and state boundaries lightly using Bokeh's packaged U.S. state boundary data. The case-provided `fc_zip3_distance.csv` remains the authoritative source for FC-to-ZIP3 mileage, closest-FC assignment, shipping distance zones, and OTD economics.
 
 ## Run
 ```bash
@@ -37,6 +37,10 @@ pip install -r requirements.txt
 python tsukumo_phase1_analysis.py
 ```
 The script creates all task-level CSV outputs and these figures:
+- `task1_Y-A-units_USA.png`
+- `task1_Y-B-units_market_type.png`
+- `task1_Y-C-units_state.png`
+- `task1_Y-D-units_ZIP3_map.png`
 - `task1_market_map.png`
 - `task3_closest_fc_map.png`
 - `task4_fc_count_map.png`
