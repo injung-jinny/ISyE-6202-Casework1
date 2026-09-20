@@ -3,6 +3,7 @@ import math, json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from bokeh.sampledata.us_states import data as US_STATES
 
 ROOT=Path(__file__).resolve().parent
 OUT=ROOT/'tsukumo_outputs'; FIG=OUT/'figures'; OUT.mkdir(exist_ok=True); FIG.mkdir(exist_ok=True)
@@ -26,25 +27,86 @@ FC15=['AZ-852','CA-900','CA-945','CO-802','FL-331','GA-303','IL-606','MA-021','M
 RAD={'GA-303':0,'AZ-852':4,'CA-900':4,'CA-945':5,'CO-802':3,'FL-331':2,'IL-606':2,'MA-021':2,'MI-481':2,'NC-275':1,'NJ-070':2,'TX-750':2,'TX-770':2,'UT-841':4,'WA-980':5}
 BINS=[0,50,150,300,600,1000,1400,1800,np.inf]; ZLAB=['1','2','3','4','5','6','7','8']
 
+# Task 1 is the overall U.S. market (Tsukumo + competitors), not Tsukumo-only demand.
+base['MarketAnnualUnits']=MARKET_ANNUAL*base.PMF
 base['TsukumoAnnualUnits']=TS_ANNUAL*base.PMF
-market_summary=base.groupby('Market',as_index=False).agg(PMF=('PMF','sum'),AnnualUnits=('TsukumoAnnualUnits','sum'))
-market_summary['AnnualRevenue']=market_summary.AnnualUnits*PRICE; market_summary['AnnualWeightLb']=market_summary.AnnualUnits*WEIGHT; market_summary['AnnualVolumeFt3']=market_summary.AnnualUnits*VOLUME
-state_summary=base.groupby('State',as_index=False).agg(PMF=('PMF','sum'),AnnualUnits=('TsukumoAnnualUnits','sum')).sort_values('AnnualUnits',ascending=False)
-zip_summary=base[['ZIP3','Market','State','Lat','Lon','PMF','TsukumoAnnualUnits']].sort_values('TsukumoAnnualUnits',ascending=False)
+
+usa_summary=pd.DataFrame([{
+    'Combination':'Y-A-#',
+    'Geography':'USA',
+    'AnnualUnits':MARKET_ANNUAL,
+    'AnnualDollars':MARKET_ANNUAL*PRICE,
+    'AnnualWeightLb':MARKET_ANNUAL*WEIGHT,
+    'AnnualVolumeFt3':MARKET_ANNUAL*VOLUME
+}])
+market_summary=base.groupby('Market',as_index=False).agg(PMF=('PMF','sum'),AnnualUnits=('MarketAnnualUnits','sum'))
+market_summary['Combination']='Y-B-#'
+market_summary['AnnualDollars']=market_summary.AnnualUnits*PRICE
+market_summary['AnnualWeightLb']=market_summary.AnnualUnits*WEIGHT
+market_summary['AnnualVolumeFt3']=market_summary.AnnualUnits*VOLUME
+state_summary=base.groupby('State',as_index=False).agg(PMF=('PMF','sum'),AnnualUnits=('MarketAnnualUnits','sum')).sort_values('AnnualUnits',ascending=False)
+state_summary['Combination']='Y-C-#'
+zip_summary=base[['ZIP3','Market','State','Lat','Lon','PMF','MarketAnnualUnits']].copy()
+zip_summary['Combination']='Y-D-#'
+zip_summary=zip_summary.sort_values('MarketAnnualUnits',ascending=False)
+
+def draw_us_boundaries(ax):
+    """Draw a dark U.S. exterior impression and light state boundaries for the contiguous U.S."""
+    for code,st in US_STATES.items():
+        if code in ('AK','HI','PR'): continue
+        ax.plot(st['lons'],st['lats'],color='0.72',linewidth=0.65,zorder=1)
+    # A second pass emphasizes coastal/international state edges without obscuring ZIP3 data.
+    coastal={'WA','OR','CA','AZ','NM','TX','LA','MS','AL','FL','GA','SC','NC','VA','MD','DE','NJ','NY','CT','RI','MA','NH','ME','VT','MI','MN','ND','MT','ID'}
+    for code in coastal:
+        st=US_STATES.get(code)
+        if st: ax.plot(st['lons'],st['lats'],color='0.18',linewidth=1.25,zorder=2)
+    ax.set_xlim(-125,-66); ax.set_ylim(24,50)
+    ax.set_aspect('equal',adjustable='box')
 
 def scatter_map(df,c,title,path,cmap='tab20',categorical=True,s=14):
     fig,ax=plt.subplots(figsize=(12,7))
+    draw_us_boundaries(ax)
     if categorical:
         cats=pd.Categorical(df[c]); vals=cats.codes
-        sc=ax.scatter(df.Lon,df.Lat,c=vals,cmap=cmap,s=s,alpha=.85)
+        sc=ax.scatter(df.Lon,df.Lat,c=vals,cmap=cmap,s=s,alpha=.85,zorder=3)
         handles=[]
         for i,name in enumerate(cats.categories[:20]):
             handles.append(plt.Line2D([0],[0],marker='o',linestyle='',label=str(name),markerfacecolor=sc.cmap(sc.norm(i)),markeredgecolor='none',markersize=6))
         if len(cats.categories)<=20: ax.legend(handles=handles,bbox_to_anchor=(1.02,1),loc='upper left',fontsize=8)
     else:
-        sc=ax.scatter(df.Lon,df.Lat,c=df[c],cmap=cmap,s=s,alpha=.85); fig.colorbar(sc,ax=ax,label=c)
-    ax.set(title=title,xlabel='Longitude',ylabel='Latitude'); ax.grid(alpha=.2); fig.tight_layout(); fig.savefig(path,dpi=180); plt.close(fig)
-scatter_map(base,'Market','Task 1 - Market type by ZIP3 centroid',FIG/'task1_market_map.png','viridis',True)
+        sc=ax.scatter(df.Lon,df.Lat,c=df[c],cmap=cmap,s=s,alpha=.85,zorder=3); fig.colorbar(sc,ax=ax,label=c)
+    ax.set(title=title,xlabel='Longitude',ylabel='Latitude'); ax.grid(alpha=.12); fig.tight_layout(); fig.savefig(path,dpi=220); plt.close(fig)
+
+# Task 1 submission-ready visualizations for the four selected combinations.
+fig,ax=plt.subplots(figsize=(7,5))
+ax.bar(['USA'],[MARKET_ANNUAL])
+ax.set(title='Task 1 - Y-A-# | Annual U.S. Market Demand',ylabel='Annual demand (units)')
+ax.text(0,MARKET_ANNUAL,f'{MARKET_ANNUAL:,.0f}',ha='center',va='bottom')
+fig.tight_layout(); fig.savefig(FIG/'task1_Y-A-units_USA.png',dpi=220); plt.close(fig)
+
+fig,ax=plt.subplots(figsize=(8,5))
+ms=market_summary.sort_values('AnnualUnits',ascending=False)
+ax.bar(ms.Market,ms.AnnualUnits)
+ax.set(title='Task 1 - Y-B-# | Annual Demand by Market Type',xlabel='Market type',ylabel='Annual demand (units)')
+for i,v in enumerate(ms.AnnualUnits): ax.text(i,v,f'{v:,.0f}',ha='center',va='bottom',fontsize=9)
+fig.tight_layout(); fig.savefig(FIG/'task1_Y-B-units_market_type.png',dpi=220); plt.close(fig)
+
+fig,ax=plt.subplots(figsize=(10,11))
+ss=state_summary.sort_values('AnnualUnits',ascending=True)
+ax.barh(ss.State,ss.AnnualUnits)
+ax.set(title='Task 1 - Y-C-# | Annual Demand by State',xlabel='Annual demand (units)',ylabel='State')
+fig.tight_layout(); fig.savefig(FIG/'task1_Y-C-units_state.png',dpi=220); plt.close(fig)
+
+fig,ax=plt.subplots(figsize=(13,8))
+draw_us_boundaries(ax)
+sc=ax.scatter(base.Lon,base.Lat,c=base.MarketAnnualUnits,cmap='viridis',
+              s=10+180*(base.PMF/base.PMF.max()),alpha=.80,zorder=3)
+fig.colorbar(sc,ax=ax,label='Annual market demand (units)')
+ax.set(title='Task 1 - Y-D-# | Annual Demand by ZIP3',xlabel='Longitude',ylabel='Latitude')
+ax.grid(alpha=.12); fig.tight_layout(); fig.savefig(FIG/'task1_Y-D-units_ZIP3_map.png',dpi=220); plt.close(fig)
+
+# Market-type reference map retained for interpretation.
+scatter_map(base,'Market','Task 1 - Market Type by ZIP3 Centroid',FIG/'task1_market_map.png','viridis',True)
 
 def inv_tri(u,a,m,b):
     fc=(m-a)/(b-a); return np.where(u<fc,a+np.sqrt(u*(b-a)*(m-a)), b-np.sqrt((1-u)*(b-a)*(b-m)))
@@ -190,7 +252,7 @@ for fc in FC15:
     comp.append([fc,float(u.OnHand.mean()),int(u.Floored27.sum()),float(s.OnHand.mean()),int(s.Floored27.sum())])
 task10=pd.DataFrame(params,columns=['FC','DemandShare','RADdays','IntervalDays','ThresholdDays','AvgInventory','Floored27Count','ShipmentCount'])
 task10comp=pd.DataFrame(comp,columns=['FC','UniformAvgInventory','UniformFloored27','ProposedAvgInventory','ProposedFloored27'])
-outputs={'task1_market_summary':market_summary,'task1_state_summary':state_summary,'task1_zip_summary':zip_summary,'task2_scenario_stats':pd.DataFrame([scen_stats]),'task3_fc_summary':fc_summary,'task3_fc_market':fc_market,'task3_distance_market':dist_market,'task4_zip_clusters':base[['ZIP3','Lat','Lon','ClosestFC','ClosestZone','Cluster','FCCount','PMF']],'task4_alloc_distance':alloc_dist,'task5_economics':econ,'task6_optimal':opt,'task6_policy_compare':policy_compare,'task7_robustness':robust,'task8_production':prod_compare,'task9_throughput':thr,'task9_sensitivity':sensitivity,'task10_policy':task10,'task10_compare':task10comp}
+outputs={'task1_usa_summary':usa_summary,'task1_market_summary':market_summary,'task1_state_summary':state_summary,'task1_zip_summary':zip_summary,'task2_scenario_stats':pd.DataFrame([scen_stats]),'task3_fc_summary':fc_summary,'task3_fc_market':fc_market,'task3_distance_market':dist_market,'task4_zip_clusters':base[['ZIP3','Lat','Lon','ClosestFC','ClosestZone','Cluster','FCCount','PMF']],'task4_alloc_distance':alloc_dist,'task5_economics':econ,'task6_optimal':opt,'task6_policy_compare':policy_compare,'task7_robustness':robust,'task8_production':prod_compare,'task9_throughput':thr,'task9_sensitivity':sensitivity,'task10_policy':task10,'task10_compare':task10comp}
 for name,df in outputs.items(): df.to_csv(OUT/f'{name}.csv',index=False)
 summary={'market_annual':MARKET_ANNUAL,'tsukumo_annual':TS_ANNUAL,'single_fc_demand_share':single_share,'scenario_stats':scen_stats,'optimized_policy':opt[['Market','PromiseDays']].to_dict('records'),'optimized_totals':optimized.to_dict(),'one_day':policy_total('1').to_dict(),'five_plus':policy_total('5+').to_dict(),'eff_per_resource':eff_per_resource,'missing_storage_rates_note':'Appendix 1 supplies only base storage O&M and setup rates; seasonal and peak-and-extreme rates are not numerically supplied, so lowest-cost tier optimization cannot be completed without class-provided rates.'}
 (OUT/'summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
