@@ -18,7 +18,7 @@ Place the six course CSV files in the repository root before running:
 - `zip3_pmf.csv`
 
 ## Task-to-data relationship
-Task 1 computes deterministic overall U.S. market demand (Tsukumo + competitors) with no seasonality or uncertainty. The selected submission combinations are Y-A-# (USA annual units), Y-B-# (annual units by market type), Y-C-# (annual units by state), and Y-D-# (annual units by ZIP3). ZIP3 PMF allocates the 2.15 million-unit annual U.S. market spatially.
+Task 1 computes deterministic overall U.S. market demand (Tsukumo + competitors) with no seasonality or uncertainty. The Y-A trend starts from the current 2,000,000-unit market in 2026 and projects through Year 5 using 7.5% annual compound growth; dollar amount uses the case average price of $3,000 per unit. The selected submission combinations are Y-A-# (USA annual units), Y-B-# (annual units by market type), Y-C-# (annual units by state), and Y-D-# (annual units by ZIP3). ZIP3 PMF allocates the 2.15 million-unit annual U.S. market spatially.
 Task 2 applies inverse-transform sampling to market-growth and share-growth triangular distributions and adds weekly, daily, and ZIP3 uncertainty.
 Task 3 uses the 15-FC columns in `fc_zip3_distance.csv` for closest-FC assignment and distance-zone analysis; ZIP3 coordinates provide the geographic cluster map.
 Task 4 forms eligible multi-source FC sets using the closest distance bucket and next higher bucket, then uses coordinates for fulfillment-cluster maps.
@@ -37,7 +37,7 @@ pip install -r requirements.txt
 python tsukumo_phase1_analysis.py
 ```
 The script creates all task-level CSV outputs and these figures:
-- `task1_Y-A-units_USA.png`
+- `task1_Y-A-units_amount_USA_5year_trend.png` — current (2026) through Year 5 U.S. market units and dollar amount trend
 - `task1_Y-B-units_market_type.png`
 - `task1_Y-C-units_state.png`
 - `task1_Y-D-units_ZIP3_map.png`
