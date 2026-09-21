@@ -96,12 +96,19 @@ for yr,val in zip(x,units):
     ax1.annotate(f'{val/1_000_000:.2f}M',(yr,val),textcoords='offset points',xytext=(0,8),ha='center',fontsize=8)
 
 ax2=ax1.twinx()
-line2=ax2.plot(x,amount,marker='s',linestyle='--',linewidth=2.0,label='Amount ($)')
-ax2.set_ylabel('Annual market amount ($)')
+line2=ax2.plot(x,amount,marker='s',linestyle='--',linewidth=2.0,label='Amount (USD)')
+ax2.set_ylabel('Annual market amount (USD)')
 ax2.ticklabel_format(style='plain',axis='y')
 for yr,val in zip(x,amount):
-    ax2.annotate('
+    amount_label=f'USD {val/1_000_000_000:.2f}B'
+    ax2.annotate(amount_label,(yr,val),textcoords='offset points',xytext=(0,-15),ha='center',fontsize=8)
 
+lines=line1+line2
+ax1.legend(lines,[ln.get_label() for ln in lines],loc='upper left')
+ax1.set_title('Task 1 - Y-A-# / Y-A-$ | U.S. Market Demand: Current to Year 5')
+fig.tight_layout()
+fig.savefig(FIG/'task1_Y-A-units_amount_USA_5year_trend.png',dpi=220)
+plt.close(fig)
 fig,ax=plt.subplots(figsize=(8,5))
 ms=market_summary.sort_values('AnnualUnits',ascending=False)
 ax.bar(ms.Market,ms.AnnualUnits)
