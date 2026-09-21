@@ -35,7 +35,15 @@ base['TsukumoAnnualUnits']=TS_ANNUAL*base.PMF
 # rate of 7.5% compounds annually and the average product price remains $3,000/unit.
 BASE_YEAR=2026
 usa_summary=pd.DataFrame({
-    'Combination':['Y-A-# / Y-A-
+    'Combination':['Y-A-# / Y-A-$']*6,
+    'PlanningYear':[f'Year {i}' for i in range(6)],
+    'CalendarYear':[BASE_YEAR+i for i in range(6)],
+    'Geography':['USA']*6,
+    'AnnualUnits':[CURRENT_MARKET*((1+MARKET_GROWTH)**i) for i in range(6)]
+})
+usa_summary['AnnualDollars']=usa_summary['AnnualUnits']*PRICE
+usa_summary['AnnualWeightLb']=usa_summary['AnnualUnits']*WEIGHT
+usa_summary['AnnualVolumeFt3']=usa_summary['AnnualUnits']*VOLUME
 market_summary=base.groupby('Market',as_index=False).agg(PMF=('PMF','sum'),AnnualUnits=('MarketAnnualUnits','sum'))
 market_summary['Combination']='Y-B-#'
 market_summary['AnnualDollars']=market_summary.AnnualUnits*PRICE
