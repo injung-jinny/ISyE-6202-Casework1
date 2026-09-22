@@ -324,19 +324,57 @@ single_share=float(base.loc[base.FCCount==1,'PMF'].sum())
 
 conv={'Primary':[1,.9,.75,.6,.4,.3],'Secondary':[1,1,.95,.75,.6,.4],'Tertiary':[1,1,1,.95,.8,.6]}; promises=['1','2','3','4','5','5+']
 ship=np.array([[607,353,230,139,121,103],[759,441,287,173,151,128],[1025,585,392,238,191,160],[1445,794,533,316,242,198],[2078,924,655,343,287,225],[2692,1427,895,491,340,259],[2841,1795,1202,776,362,276],[2912,1854,1330,894,388,301]])
-econ=[]
+
+# Task 5: delivery-promise economics using the Task 4 allocated demand structure.
+task5_optimal_rows=[]; task5_config_rows=[]
+for cfg_name,(cfg5,alloc5,_,_) in task4_results.items():
+    econ5=[]
+    for mt in ['Primary','Secondary','Tertiary']:
+        sub=alloc5[alloc5.Market==mt].copy()
+        potential_units=TS_ANNUAL*sub.AllocatedPMF.sum()
+        for j,promise in enumerate(promises):
+            c=conv[mt][j]
+            units=potential_units*c; revenue=units*PRICE
+            sc=(TS_ANNUAL*sub.AllocatedPMF*c*sub.Zone.astype(int).map(lambda z:ship[z-1,j])).sum()
+            cogs=units*COGS; net=revenue-sc; gp=net-cogs
+            econ5.append([mt,promise,potential_units,c,units,revenue,sc,cogs,net,gp])
+    econ5=pd.DataFrame(econ5,columns=['Market','PromiseDays','PotentialUnits','ConversionRate','ConvertedUnits','Revenue','ShippingCost','COGS','NetRevenue','GrossProfit'])
+    opt5=econ5.loc[econ5.groupby('Market').GrossProfit.idxmax()].copy()
+    optimized5=opt5[['ConvertedUnits','Revenue','ShippingCost','COGS','NetRevenue','GrossProfit']].sum()
+    prefix=cfg_name.replace('-','').lower()
+    config5=pd.DataFrame([{'Configuration':cfg_name,
+        'PrimaryPromiseDays':str(opt5.loc[opt5.Market=='Primary','PromiseDays'].iloc[0]),
+        'SecondaryPromiseDays':str(opt5.loc[opt5.Market=='Secondary','PromiseDays'].iloc[0]),
+        'TertiaryPromiseDays':str(opt5.loc[opt5.Market=='Tertiary','PromiseDays'].iloc[0]),
+        'ConvertedUnits':float(optimized5.ConvertedUnits),'Revenue':float(optimized5.Revenue),
+        'ShippingCost':float(optimized5.ShippingCost),'COGS':float(optimized5.COGS),
+        'NetRevenue':float(optimized5.NetRevenue),'GrossProfit':float(optimized5.GrossProfit)}])
+    econ5.to_csv(OUT/f'task5_{prefix}_delivery_promise_economics.csv',index=False)
+    opt5.to_csv(OUT/f'task5_{prefix}_optimal_delivery_promise.csv',index=False)
+    config5.to_csv(OUT/f'task5_{prefix}_configuration_economics.csv',index=False)
+    task5_optimal_rows.append(opt5.assign(Configuration=cfg_name)); task5_config_rows.append(config5)
+    fig,ax=plt.subplots(figsize=(9,5))
+    piv=econ5.pivot(index='PromiseDays',columns='Market',values='GrossProfit').reindex(promises)
+    piv.plot(kind='bar',ax=ax); ax.set(xlabel='Delivery promise (days)',ylabel='Gross profit ($)',title=f'Task 5 - {cfg_name} Gross Profit by Delivery Promise')
+    ax.grid(axis='y',alpha=.15); fig.tight_layout(); fig.savefig(FIG/f'task5_{prefix}_gross_profit_by_promise.png',dpi=220); plt.close(fig)
+
+task5_optimal_all=pd.concat(task5_optimal_rows,ignore_index=True)
+task5_optimal_summary=task5_optimal_all[['Configuration','Market','PromiseDays','ConvertedUnits','Revenue','ShippingCost','COGS','GrossProfit']]
+task5_optimal_summary.to_csv(OUT/'task5_optimal_delivery_promise_summary.csv',index=False)
+task5_configuration_economics=pd.concat(task5_config_rows,ignore_index=True)
+task5_configuration_economics.to_csv(OUT/'task5_configuration_economics_summary.csv',index=False)
+fig,ax=plt.subplots(figsize=(8,5)); promise_num={'1':1,'2':2,'3':3,'4':4,'5':5,'5+':6}
 for mt in ['Primary','Secondary','Tertiary']:
-    sub=base[base.Market==mt]
-    for j,p in enumerate(promises):
-        c=conv[mt][j]; units=TS_ANNUAL*sub.PMF.sum()*c; revenue=units*PRICE
-        sc=(TS_ANNUAL*sub.PMF*c*sub.ClosestZone.astype(int).map(lambda z:ship[z-1,j])).sum()
-        net=revenue-sc; gp=net-units*COGS
-        econ.append([mt,p,units,revenue,sc,net,gp])
-econ=pd.DataFrame(econ,columns=['Market','PromiseDays','ConvertedUnits','Revenue','ShippingCost','NetRevenue','GrossProfit'])
-opt=econ.loc[econ.groupby('Market').GrossProfit.idxmax()].copy(); optimized=opt[['ConvertedUnits','Revenue','ShippingCost','NetRevenue','GrossProfit']].sum()
-def policy_total(p): return econ[econ.PromiseDays==p][['ConvertedUnits','Revenue','ShippingCost','NetRevenue','GrossProfit']].sum()
-policy_compare=pd.DataFrame([['Optimized',*optimized.values],['1-day all',*policy_total('1').values],['5+ all',*policy_total('5+').values]],columns=['Policy','ConvertedUnits','Revenue','ShippingCost','NetRevenue','GrossProfit'])
-fig,ax=plt.subplots(figsize=(9,5)); piv=econ.pivot(index='PromiseDays',columns='Market',values='GrossProfit').reindex(promises); piv.plot(kind='bar',ax=ax); ax.set_ylabel('Gross profit ($)'); ax.set_title('Task 5 - Gross profit by OTD promise and market type'); fig.tight_layout(); fig.savefig(FIG/'task5_gross_profit.png',dpi=180); plt.close(fig)
+    sub=task5_optimal_all[task5_optimal_all.Market==mt]
+    ax.plot(sub.Configuration,[promise_num[str(x)] for x in sub.PromiseDays],marker='o',label=mt)
+ax.set_yticks([1,2,3,4,5,6],['1','2','3','4','5','5+'])
+ax.set(xlabel='FC configuration',ylabel='Optimal delivery promise (days)',title='Task 5 - Optimal Delivery Promise by Network Configuration')
+ax.legend(); ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task5_optimal_promise_comparison.png',dpi=220); plt.close(fig)
+
+# Keep the 15-FC Task 5 objects as downstream defaults for existing Tasks 6-10.
+econ=task5_optimal_all[task5_optimal_all.Configuration=='15-FC'].copy()
+opt=econ.copy()
+optimized=opt[['ConvertedUnits','Revenue','ShippingCost','NetRevenue','GrossProfit']].sum()
 
 fc_mean={fc:np.mean(np.array([x[fc] for x in scenario_daily_fc]),axis=0) for fc in FC15}; fc_sd={fc:np.std(np.array([x[fc] for x in scenario_daily_fc]),axis=0,ddof=1) for fc in FC15}
 def forward_robust(mu,sd,L,z):
