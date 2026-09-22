@@ -231,7 +231,6 @@ fc_summary=base.groupby('ClosestFC',as_index=False).agg(DemandShare=('PMF','sum'
 fc_market=pd.pivot_table(base,index='ClosestFC',columns='Market',values='PMF',aggfunc='sum',fill_value=0).reset_index()
 dist_market=pd.pivot_table(base,index='Market',columns='ClosestZone',values='PMF',aggfunc='sum',fill_value=0)
 dist_market=dist_market.div(dist_market.sum(axis=1),axis=0).reset_index()
-scatter_map(base,'ClosestFC','Task 3 - Closest-FC ZIP3 clusters',FIG/'task3_closest_fc_map.png','tab20',True)
 
 def candidate(row):
     z=int(row['ClosestZone']); maxz=min(8,z+1)
