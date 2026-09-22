@@ -266,7 +266,22 @@ def build_task4(cfg_name,fcs):
     alloc.to_csv(OUT/f'task4_{prefix}_allocation.csv',index=False)
     source_summary.to_csv(OUT/f'task4_{prefix}_source_summary.csv',index=False)
     alloc_dist.to_csv(OUT/f'task4_{prefix}_allocation_zone_distribution.csv',index=False)
-    scatter_map(cfg,'Cluster',f'Task 4 - {cfg_name} Fulfillment Clusters',FIG/f'task4_{cfg_name}_fulfillment_clusters.png','tab20',True,s=12)
+    # Cluster maps can have many categories; for Task 4 place the complete legend
+    # outside the plotting area on the right so no cluster labels are omitted.
+    fig,ax=plt.subplots(figsize=(15,7))
+    draw_us_boundaries(ax)
+    cats=pd.Categorical(cfg['Cluster']); vals=cats.codes
+    sc=ax.scatter(cfg.Lon,cfg.Lat,c=vals,cmap='tab20',s=12,alpha=.85,zorder=3)
+    handles=[plt.Line2D([0],[0],marker='o',linestyle='',label=str(name),
+             markerfacecolor=sc.cmap(sc.norm(i)),markeredgecolor='none',markersize=6)
+             for i,name in enumerate(cats.categories)]
+    ax.legend(handles=handles,title='Fulfillment Cluster',loc='center left',
+              bbox_to_anchor=(1.01,.5),fontsize=7,title_fontsize=8,
+              frameon=True,ncol=max(1,math.ceil(len(handles)/28)))
+    ax.set(title=f'Task 4 - {cfg_name} Fulfillment Clusters',xlabel='Longitude',ylabel='Latitude')
+    fig.subplots_adjust(right=.73)
+    fig.savefig(FIG/f'task4_{cfg_name}_fulfillment_clusters.png',dpi=220,bbox_inches='tight')
+    plt.close(fig)
     scatter_map(cfg,'FCCount',f'Task 4 - {cfg_name} Number of Eligible FCs by ZIP3',FIG/f'task4_{cfg_name}_fc_count_map.png','RdYlGn',False,s=16)
     return cfg,alloc,source_summary,alloc_dist
 
