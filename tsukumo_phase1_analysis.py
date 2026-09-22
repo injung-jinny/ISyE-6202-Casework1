@@ -232,22 +232,80 @@ fc_market=pd.pivot_table(base,index='ClosestFC',columns='Market',values='PMF',ag
 dist_market=pd.pivot_table(base,index='Market',columns='ClosestZone',values='PMF',aggfunc='sum',fill_value=0)
 dist_market=dist_market.div(dist_market.sum(axis=1),axis=0).reset_index()
 
-def candidate(row):
-    z=int(row['ClosestZone']); maxz=min(8,z+1)
-    return tuple(sorted([fc for fc in FC15 if int(pd.cut(pd.Series([row[fc]]),BINS,labels=ZLAB,include_lowest=True).iloc[0])<=maxz]))
-base['FulfillmentSet']=base.apply(candidate,axis=1); base['FCCount']=base.FulfillmentSet.str.len(); base['Cluster']=base.FulfillmentSet.apply(lambda x:'|'.join(x))
-alloc=[]
-for _,r in base.iterrows():
-    cands=list(r.FulfillmentSet); close=r.ClosestFC
-    if len(cands)==1: alloc.append((r.ZIP3,close,1.0,r.PMF,r.Market,r[close])); continue
-    alloc.append((r.ZIP3,close,.8,r.PMF*.8,r.Market,r[close]))
-    others=[x for x in cands if x!=close]
-    for fc in others: alloc.append((r.ZIP3,fc,.2/len(others),r.PMF*.2/len(others),r.Market,r[fc]))
-alloc=pd.DataFrame(alloc,columns=['ZIP3','FC','Allocation','AllocatedPMF','Market','Miles']); alloc['Zone']=pd.cut(alloc.Miles,BINS,labels=ZLAB,include_lowest=True).astype(str)
+def build_task4(cfg_name,fcs):
+    cfg=base.copy()
+    cfg['ClosestFC']=cfg[fcs].idxmin(axis=1)
+    cfg['ClosestMiles']=cfg[fcs].min(axis=1)
+    cfg['ClosestZone']=pd.cut(cfg.ClosestMiles,BINS,labels=ZLAB,include_lowest=True,right=True).astype(str)
+    def eligible(row):
+        maxz=min(8,int(row['ClosestZone'])+1)
+        return tuple(sorted(fc for fc in fcs if int(pd.cut(pd.Series([row[fc]]),BINS,labels=ZLAB,include_lowest=True,right=True).iloc[0])<=maxz))
+    cfg['FulfillmentSet']=cfg.apply(eligible,axis=1)
+    cfg['FCCount']=cfg.FulfillmentSet.str.len()
+    cfg['Cluster']=cfg.FulfillmentSet.apply(lambda x:'|'.join(x))
+    cfg['SourceType']=np.where(cfg.FCCount==1,'Single-source','Multi-source')
+    alloc=[]
+    for _,r in cfg.iterrows():
+        cands=list(r.FulfillmentSet); close=r.ClosestFC
+        if len(cands)==1:
+            alloc.append((r.ZIP3,close,1.0,r.PMF,r.Market,r[close]))
+        else:
+            alloc.append((r.ZIP3,close,.8,r.PMF*.8,r.Market,r[close]))
+            others=[x for x in cands if x!=close]
+            for fc in others:
+                alloc.append((r.ZIP3,fc,.2/len(others),r.PMF*.2/len(others),r.Market,r[fc]))
+    alloc=pd.DataFrame(alloc,columns=['ZIP3','FC','Allocation','AllocatedPMF','Market','Miles'])
+    alloc['Zone']=pd.cut(alloc.Miles,BINS,labels=ZLAB,include_lowest=True,right=True).astype(str)
+    alloc['AnnualTsukumoUnits']=alloc.AllocatedPMF*TS_ANNUAL
+    single=float(cfg.loc[cfg.FCCount==1,'PMF'].sum()); multi=1-single
+    source_summary=pd.DataFrame([{'Configuration':cfg_name,'SingleSourceShare':single,'MultiSourceShare':multi}])
+    alloc_dist=pd.pivot_table(alloc,index='Market',columns='Zone',values='AllocatedPMF',aggfunc='sum',fill_value=0)
+    alloc_dist=alloc_dist.div(alloc_dist.sum(axis=1),axis=0).reset_index()
+    prefix=cfg_name.replace('-','').lower()
+    cfg[['ZIP3','Market','State','Lat','Lon','PMF','ClosestFC','ClosestMiles','ClosestZone','FulfillmentSet','FCCount','Cluster','SourceType']].to_csv(OUT/f'task4_{prefix}_zip_clusters.csv',index=False)
+    alloc.to_csv(OUT/f'task4_{prefix}_allocation.csv',index=False)
+    source_summary.to_csv(OUT/f'task4_{prefix}_source_summary.csv',index=False)
+    alloc_dist.to_csv(OUT/f'task4_{prefix}_allocation_zone_distribution.csv',index=False)
+    scatter_map(cfg,'Cluster',f'Task 4 - {cfg_name} Fulfillment Clusters',FIG/f'task4_{cfg_name}_fulfillment_clusters.png','tab20',True,s=12)
+    scatter_map(cfg,'FCCount',f'Task 4 - {cfg_name} Number of Eligible FCs by ZIP3',FIG/f'task4_{cfg_name}_fc_count_map.png','RdYlGn',False,s=16)
+    return cfg,alloc,source_summary,alloc_dist
+
+task4_results={}
+task4_source_frames=[]; task4_alloc_frames=[]
+for cfg_name,fcs in TASK3_CONFIGS.items():
+    cfg4,alloc4,source4,dist4=build_task4(cfg_name,fcs)
+    task4_results[cfg_name]=(cfg4,alloc4,source4,dist4)
+    task4_source_frames.append(source4)
+    d=dist4.copy(); d.insert(0,'Configuration',cfg_name); task4_alloc_frames.append(d)
+task4_source_comparison=pd.concat(task4_source_frames,ignore_index=True)
+task4_allocation_zone_comparison=pd.concat(task4_alloc_frames,ignore_index=True)
+task4_source_comparison.to_csv(OUT/'task4_source_comparison.csv',index=False)
+task4_allocation_zone_comparison.to_csv(OUT/'task4_allocation_zone_comparison.csv',index=False)
+
+# Submission figure: eligible-FC count maps for all three network configurations.
+fig,axes=plt.subplots(1,3,figsize=(15,4.8),sharex=True,sharey=True)
+for ax,(cfg_name,(cfg4,_,_,_)) in zip(axes,task4_results.items()):
+    draw_us_boundaries(ax)
+    sc=ax.scatter(cfg4.Lon,cfg4.Lat,c=cfg4.FCCount,cmap='viridis',s=12,alpha=.85,zorder=3)
+    ax.set_title(cfg_name); ax.set_xlabel('Longitude')
+axes[0].set_ylabel('Latitude')
+fig.colorbar(sc,ax=axes.ravel().tolist(),label='Eligible FC count',shrink=.82)
+fig.suptitle('Task 4 - Number of Eligible FCs by ZIP3')
+fig.subplots_adjust(left=.05,right=.92,bottom=.10,top=.86,wspace=.08)
+fig.savefig(FIG/'task4_fc_count_comparison.png',dpi=220); plt.close(fig)
+
+# Submission figure: single-source vs multi-source PMF-weighted demand share.
+fig,ax=plt.subplots(figsize=(8,5))
+x=np.arange(len(task4_source_comparison)); w=.36
+ax.bar(x-w/2,task4_source_comparison.SingleSourceShare*100,w,label='Single-source')
+ax.bar(x+w/2,task4_source_comparison.MultiSourceShare*100,w,label='Multi-source')
+ax.set_xticks(x,task4_source_comparison.Configuration); ax.set_ylabel('National demand share (%)')
+ax.set_title('Task 4 - Single-Source vs Multi-Source Demand Share'); ax.legend(); ax.grid(axis='y',alpha=.15)
+fig.tight_layout(); fig.savefig(FIG/'task4_source_share_comparison.png',dpi=220); plt.close(fig)
+
+# Keep 15-FC objects as downstream defaults for Tasks 5-10.
+base,alloc,_,alloc_dist=task4_results['15-FC']
 single_share=float(base.loc[base.FCCount==1,'PMF'].sum())
-alloc_dist=pd.pivot_table(alloc,index='Market',columns='Zone',values='AllocatedPMF',aggfunc='sum',fill_value=0); alloc_dist=alloc_dist.div(alloc_dist.sum(axis=1),axis=0).reset_index()
-scatter_map(base,'Cluster','Task 4 - Multi-source fulfillment clusters',FIG/'task4_fulfillment_clusters.png','tab20',True,s=12)
-scatter_map(base,'FCCount','Task 4 - Number of eligible FCs by ZIP3',FIG/'task4_fc_count_map.png','RdYlGn',False,s=16)
 
 conv={'Primary':[1,.9,.75,.6,.4,.3],'Secondary':[1,1,.95,.75,.6,.4],'Tertiary':[1,1,1,.95,.8,.6]}; promises=['1','2','3','4','5','5+']
 ship=np.array([[607,353,230,139,121,103],[759,441,287,173,151,128],[1025,585,392,238,191,160],[1445,794,533,316,242,198],[2078,924,655,343,287,225],[2692,1427,895,491,340,259],[2841,1795,1202,776,362,276],[2912,1854,1330,894,388,301]])
