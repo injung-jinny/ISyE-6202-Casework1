@@ -186,6 +186,47 @@ ax.plot(task2_daily.Day,task2_daily.RobustUpper99,label='99% robust upper',linew
 ax.set(title='Task 2 - Daily Seasonal Robust Demand',xlabel='Planning day',ylabel='Tsukumo demand (units/day)')
 ax.legend(ncol=2); ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task2_daily_seasonal_robust_demand.png',dpi=220); plt.close(fig)
 
+# Task 3 submission-ready 1-FC / 4-FC / 15-FC closest-FC and shipment-zone outputs.
+TASK3_CONFIGS={
+    '1-FC':['GA-303'],
+    '4-FC':['GA-303','NY-134','TX-799','UT-841'],
+    '15-FC':FC15
+}
+task3_summary_rows=[]; task3_zone_frames=[]
+for cfg_name,fcs in TASK3_CONFIGS.items():
+    cfg=base.copy()
+    cfg['ClosestFC']=cfg[fcs].idxmin(axis=1)
+    cfg['ClosestMiles']=cfg[fcs].min(axis=1)
+    cfg['ClosestZone']=pd.cut(cfg.ClosestMiles,BINS,labels=ZLAB,include_lowest=True,right=True).astype(str)
+    cfg['AnnualTsukumoUnits']=cfg.PMF*TS_ANNUAL
+    cfg['WeightedMiles']=cfg.PMF*cfg.ClosestMiles
+    prefix=cfg_name.replace('-','').lower()
+    fc_sum=cfg.groupby('ClosestFC',as_index=False).agg(DemandShare=('PMF','sum'))
+    fc_sum['AnnualUnits']=fc_sum.DemandShare*TS_ANNUAL
+    market_zone=pd.pivot_table(cfg,index='Market',columns='ClosestZone',values='PMF',aggfunc='sum',fill_value=0)
+    market_zone=market_zone.div(market_zone.sum(axis=1),axis=0).reset_index()
+    zone_share=cfg.groupby('ClosestZone',as_index=False,observed=False).agg(DemandShare=('PMF','sum'))
+    zone_share['Configuration']=cfg_name
+    cfg[['ZIP3','Market','State','Lat','Lon','PMF','ClosestFC','ClosestMiles','ClosestZone','AnnualTsukumoUnits']].to_csv(OUT/f'{prefix}_task3_zip_assignment.csv',index=False)
+    fc_sum.to_csv(OUT/f'{prefix}_task3_fc_summary.csv',index=False)
+    market_zone.to_csv(OUT/f'{prefix}_task3_distance_market.csv',index=False)
+    zone_share.to_csv(OUT/f'{prefix}_task3_zone_share.csv',index=False)
+    scatter_map(cfg,'ClosestFC',f'Task 3 - {cfg_name} Closest-FC ZIP3 Clusters',FIG/f'task3_{cfg_name}_closest_fc_map.png','tab20',True)
+    task3_summary_rows.append([cfg_name,len(fcs),float(cfg.WeightedMiles.sum()),float(cfg.loc[cfg.ClosestZone.astype(int)<=3,'PMF'].sum()),float(cfg.loc[cfg.ClosestZone.astype(int)>=6,'PMF'].sum())])
+    task3_zone_frames.append(zone_share)
+task3_config_summary=pd.DataFrame(task3_summary_rows,columns=['Configuration','FCCount','DemandWeightedMiles','DemandShareZone1to3','DemandShareZone6to8'])
+task3_zone_comparison=pd.concat(task3_zone_frames,ignore_index=True)
+task3_config_summary.to_csv(OUT/'task3_configuration_summary.csv',index=False)
+task3_zone_comparison.to_csv(OUT/'task3_zone_share_comparison.csv',index=False)
+fig,axes=plt.subplots(1,3,figsize=(15,4.8),sharey=True)
+for ax,(cfg_name,grp) in zip(axes,task3_zone_comparison.groupby('Configuration',sort=False)):
+    g=grp.copy(); g['ClosestZone']=g['ClosestZone'].astype(int); g=g.sort_values('ClosestZone')
+    ax.bar(g['ClosestZone'].astype(str),g.DemandShare*100)
+    ax.set_title(cfg_name); ax.set_xlabel('Shipment Zone'); ax.grid(axis='y',alpha=.15)
+axes[0].set_ylabel('National demand share (%)')
+fig.suptitle('Task 3 - PMF-Weighted Shipment-Zone Distribution by FC Configuration')
+fig.tight_layout(); fig.savefig(FIG/'task3_zone_distribution_comparison.png',dpi=220); plt.close(fig)
+
 fc_summary=base.groupby('ClosestFC',as_index=False).agg(DemandShare=('PMF','sum')); fc_summary['AnnualUnits']=fc_summary.DemandShare*TS_ANNUAL
 fc_market=pd.pivot_table(base,index='ClosestFC',columns='Market',values='PMF',aggfunc='sum',fill_value=0).reset_index()
 dist_market=pd.pivot_table(base,index='Market',columns='ClosestZone',values='PMF',aggfunc='sum',fill_value=0)
