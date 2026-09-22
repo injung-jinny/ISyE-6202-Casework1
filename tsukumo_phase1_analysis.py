@@ -325,17 +325,19 @@ single_share=float(base.loc[base.FCCount==1,'PMF'].sum())
 conv={'Primary':[1,.9,.75,.6,.4,.3],'Secondary':[1,1,.95,.75,.6,.4],'Tertiary':[1,1,1,.95,.8,.6]}; promises=['1','2','3','4','5','5+']
 ship=np.array([[607,353,230,139,121,103],[759,441,287,173,151,128],[1025,585,392,238,191,160],[1445,794,533,316,242,198],[2078,924,655,343,287,225],[2692,1427,895,491,340,259],[2841,1795,1202,776,362,276],[2912,1854,1330,894,388,301]])
 
-# Task 5: delivery-promise economics using the Task 4 allocated demand structure.
+# Task 5: delivery-promise economics using the Task 3 closest-FC assignment,
+# as explicitly required by the casework. Task 4's 80/20 multi-source allocation
+# is not used for Task 5 customer-delivery economics.
 task5_optimal_rows=[]; task5_config_rows=[]
 for cfg_name,(cfg5,alloc5,_,_) in task4_results.items():
     econ5=[]
     for mt in ['Primary','Secondary','Tertiary']:
-        sub=alloc5[alloc5.Market==mt].copy()
-        potential_units=TS_ANNUAL*sub.AllocatedPMF.sum()
+        sub=cfg5[cfg5.Market==mt].copy()
+        potential_units=TS_ANNUAL*sub.PMF.sum()
         for j,promise in enumerate(promises):
             c=conv[mt][j]
             units=potential_units*c; revenue=units*PRICE
-            sc=(TS_ANNUAL*sub.AllocatedPMF*c*sub.Zone.astype(int).map(lambda z:ship[z-1,j])).sum()
+            sc=(TS_ANNUAL*sub.PMF*c*sub.ClosestZone.astype(int).map(lambda z:ship[z-1,j])).sum()
             cogs=units*COGS; net=revenue-sc; gp=net-cogs
             econ5.append([mt,promise,potential_units,c,units,revenue,sc,cogs,net,gp])
     econ5=pd.DataFrame(econ5,columns=['Market','PromiseDays','PotentialUnits','ConversionRate','ConvertedUnits','Revenue','ShippingCost','COGS','NetRevenue','GrossProfit'])
