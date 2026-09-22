@@ -157,6 +157,35 @@ mean_daily=scenario_daily_net.mean(0); sd_daily=scenario_daily_net.std(0,ddof=1)
 scen_stats={'min':float(annual_scen.min()),'mode_proxy':float(np.median(annual_scen)),'mean':float(annual_scen.mean()),'std':float(annual_scen.std(ddof=1)),'max':float(annual_scen.max())}
 for name,z in [('68',1),('95',1.65),('99',2.33)]: scen_stats[name+'_upper']=scen_stats['mean']+z*scen_stats['std']
 
+# Task 2 submission-ready tables and figures.
+task2_scenarios=pd.DataFrame({
+    'Scenario':np.arange(1,N+1),
+    'MarketGrowth':mg,
+    'TsukumoShareGrowth':sg,
+    'AnnualTsukumoDemand':annual_scen
+})
+task2_daily=pd.DataFrame({'Day':np.arange(1,DAYS+1),'MeanDemand':mean_daily,'StdDemand':sd_daily})
+for lab,z in [('68',1.0),('95',1.65),('99',2.33)]:
+    task2_daily[f'RobustUpper{lab}']=mean_daily+z*sd_daily
+task2_scenarios.to_csv(OUT/'task2_scenarios.csv',index=False)
+task2_daily.to_csv(OUT/'task2_daily_robust_demand.csv',index=False)
+
+fig,ax=plt.subplots(figsize=(9,5.5))
+ax.hist(annual_scen,bins=8,alpha=.65,edgecolor='black')
+ax.axvline(scen_stats['mean'],linestyle='-',linewidth=2,label=f"Mean = {scen_stats['mean']:,.0f}")
+for lab,ls in [('68','--'),('95','-.'),('99',':')]:
+    ax.axvline(scen_stats[lab+'_upper'],linestyle=ls,linewidth=1.8,label=f"{lab}% upper = {scen_stats[lab+'_upper']:,.0f}")
+ax.set(title='Task 2 - Annual Tsukumo Demand Scenario Distribution',xlabel='Annual demand (units)',ylabel='Scenario count')
+ax.legend(); ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task2_annual_scenario_distribution.png',dpi=220); plt.close(fig)
+
+fig,ax=plt.subplots(figsize=(12,5.5))
+ax.plot(task2_daily.Day,task2_daily.MeanDemand,label='Mean daily demand',linewidth=1.4)
+ax.plot(task2_daily.Day,task2_daily.RobustUpper68,label='68% robust upper',linewidth=1.0,alpha=.8)
+ax.plot(task2_daily.Day,task2_daily.RobustUpper95,label='95% robust upper',linewidth=1.0,alpha=.8)
+ax.plot(task2_daily.Day,task2_daily.RobustUpper99,label='99% robust upper',linewidth=1.2)
+ax.set(title='Task 2 - Daily Seasonal Robust Demand',xlabel='Planning day',ylabel='Tsukumo demand (units/day)')
+ax.legend(ncol=2); ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task2_daily_seasonal_robust_demand.png',dpi=220); plt.close(fig)
+
 fc_summary=base.groupby('ClosestFC',as_index=False).agg(DemandShare=('PMF','sum')); fc_summary['AnnualUnits']=fc_summary.DemandShare*TS_ANNUAL
 fc_market=pd.pivot_table(base,index='ClosestFC',columns='Market',values='PMF',aggfunc='sum',fill_value=0).reset_index()
 dist_market=pd.pivot_table(base,index='Market',columns='ClosestZone',values='PMF',aggfunc='sum',fill_value=0)
