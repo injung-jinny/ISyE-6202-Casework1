@@ -139,19 +139,19 @@ mg=inv_tri(rng.random(N),.04,.075,.12); sg=inv_tri(rng.random(N),.15,.20,.25)
 annual_scen=CURRENT_MARKET*(1+mg)*SHARE*(1+sg)
 week=pd.to_numeric(season['Proportion'].str.rstrip('%'))/100
 day=pd.to_numeric(season['Proportion.1'].dropna().str.rstrip('%'))/100
-scenario_daily_fc=[]; scenario_daily_net=[]
+scenario_daily_fc=[]; scenario_daily_net=[]; scenario_zip_daily=[]
 base['ClosestFC']=base[FC15].idxmin(axis=1); base['ClosestMiles']=base[FC15].min(axis=1); base['ClosestZone']=pd.cut(base.ClosestMiles,BINS,labels=ZLAB,include_lowest=True,right=True).astype(str)
 for k in range(N):
     wf=np.clip(week.values*(1+rng.normal(0,.20,len(week))),1e-9,None); wf/=wf.sum()
     df=np.clip(day.values*(1+rng.normal(0,.15,len(day))),1e-9,None); df/=df.sum()
     zp=np.clip(base.PMF.values*(1+rng.normal(0,.15,len(base))),0,None); zp/=zp.sum()
-    dnet=[]; dfc={fc:[] for fc in FC15}
+    dnet=[]; dfc={fc:[] for fc in FC15}; dzip=[]
     for w in range(52):
         for dow in range(7):
             total=annual_scen[k]*wf[w]*df[dow]
-            dz=total*zp; dnet.append(dz.sum())
+            dz=total*zp; dnet.append(dz.sum()); dzip.append(dz.copy())
             for fc in FC15: dfc[fc].append(dz[base.ClosestFC.values==fc].sum())
-    scenario_daily_net.append(dnet); scenario_daily_fc.append(dfc)
+    scenario_daily_net.append(dnet); scenario_daily_fc.append(dfc); scenario_zip_daily.append(np.vstack(dzip))
 scenario_daily_net=np.array(scenario_daily_net)
 mean_daily=scenario_daily_net.mean(0); sd_daily=scenario_daily_net.std(0,ddof=1)
 scen_stats={'min':float(annual_scen.min()),'mode_proxy':float(np.median(annual_scen)),'mean':float(annual_scen.mean()),'std':float(annual_scen.std(ddof=1)),'max':float(annual_scen.max())}
@@ -426,23 +426,102 @@ econ=task5_optimal_all[task5_optimal_all.Configuration=='15-FC'].copy()
 opt=econ.copy()
 optimized=opt[['ConvertedUnits','Revenue','ShippingCost','NetRevenue','GrossProfit']].sum()
 
-fc_mean={fc:np.mean(np.array([x[fc] for x in scenario_daily_fc]),axis=0) for fc in FC15}; fc_sd={fc:np.std(np.array([x[fc] for x in scenario_daily_fc]),axis=0,ddof=1) for fc in FC15}
+# Task 7: robust autonomy targeting for 1-FC, 4-FC, and 15-FC.
+# FC-level stochastic demand uses the Task 4 fulfillment allocation (80% to the
+# closest FC and 20% split across other eligible FCs for multi-source ZIP3s).
+# Each FC maintains a 3-week / 99% robust autonomy target. The DC carries the
+# incremental stock required to reach the overall network autonomy target.
 def forward_robust(mu,sd,L,z):
     n=len(mu); out=np.zeros(n)
     for t in range(n):
-        ix=np.arange(t,t+L)%n; out[t]=mu[ix].sum()+z*np.sqrt((sd[ix]**2).sum())
+        ix=np.arange(t,t+L)%n
+        out[t]=mu[ix].sum()+z*np.sqrt((sd[ix]**2).sum())
     return out
-fc_target={fc:forward_robust(fc_mean[fc],fc_sd[fc],21,2.33) for fc in FC15}
-fc_total=np.sum(np.vstack([fc_target[f] for f in FC15]),axis=0)
-robust_rows=[]; network_targets={}
-for Lw in [4,6,8]:
-  for lab,z in [('50',0),('68',1),('95',1.65),('99',2.33)]:
-    nt=forward_robust(mean_daily,sd_daily,Lw*7,z); network_targets[(Lw,lab)]=nt
-    dc=np.maximum(nt-fc_total,0)
-    robust_rows.append([Lw,lab,float(fc_total.max()),float(dc.max()),float(nt.max())])
-robust=pd.DataFrame(robust_rows,columns=['Weeks','Robustness','MaxFCInventory','MaxDCInventory','MaxNetworkInventory'])
 
-net_target=network_targets[(6,'99')]; dc_target=np.maximum(net_target-fc_total,0)
+task7_config_rows=[]; task7_results={}
+zip_index={z:i for i,z in enumerate(base.ZIP3.astype(str))}
+for cfg_name,(cfg7,alloc7,_,_) in task4_results.items():
+    fcs7=TASK3_CONFIGS[cfg_name]; prefix=cfg_name.replace('-','').lower()
+    W=np.zeros((len(base),len(fcs7)))
+    fc_index={fc:j for j,fc in enumerate(fcs7)}
+    for _,r in alloc7.iterrows():
+        W[zip_index[str(r.ZIP3)],fc_index[r.FC]]+=float(r.Allocation)
+    scen_fc=np.stack([arr @ W for arr in scenario_zip_daily],axis=0)  # scenario x day x FC
+    fc_mean7=scen_fc.mean(axis=0); fc_sd7=scen_fc.std(axis=0,ddof=1)
+    fc_target7=np.column_stack([forward_robust(fc_mean7[:,j],fc_sd7[:,j],21,2.33) for j in range(len(fcs7))])
+    fc_total7=fc_target7.sum(axis=1)
+
+    fc_daily=pd.DataFrame({'Day':np.arange(1,DAYS+1)})
+    for j,fc in enumerate(fcs7):
+        fc_daily[f'{fc}_MeanDailyDemand']=fc_mean7[:,j]
+        fc_daily[f'{fc}_StdDailyDemand']=fc_sd7[:,j]
+        fc_daily[f'{fc}_TargetInventory_3wk99']=fc_target7[:,j]
+    fc_daily.to_csv(OUT/f'task7_{prefix}_fc_daily_inventory.csv',index=False)
+
+    fc_max=pd.DataFrame({
+        'FC':fcs7,
+        'MaxTargetInventory_3wk99':[float(fc_target7[:,j].max()) for j in range(len(fcs7))],
+        'AverageTargetInventory_3wk99':[float(fc_target7[:,j].mean()) for j in range(len(fcs7))]
+    })
+    fc_max.to_csv(OUT/f'task7_{prefix}_fc_max_inventory.csv',index=False)
+
+    robust_rows=[]; scenario_profiles={}
+    for Lw in [4,6,8]:
+        for lab,z in [('50',0),('68',1),('95',1.65),('99',2.33)]:
+            nt=forward_robust(mean_daily,sd_daily,Lw*7,z)
+            dc=np.maximum(nt-fc_total7,0)
+            scenario_profiles[(Lw,lab)]=(nt,dc)
+            robust_rows.append([Lw,lab,float(fc_total7.max()),float(dc.max()),float(nt.max())])
+    robust7=pd.DataFrame(robust_rows,columns=['Weeks','Robustness','MaxFCInventory','MaxDCInventory','MaxNetworkInventory'])
+    robust7.to_csv(OUT/f'task7_{prefix}_robustness_comparison.csv',index=False)
+
+    net_target7,dc_target7=scenario_profiles[(6,'99')]
+    network_daily=pd.DataFrame({
+        'Day':np.arange(1,DAYS+1),
+        'TotalFCInventory_3wk99':fc_total7,
+        'DCInventory_6wk99':dc_target7,
+        'TotalNetworkInventory_6wk99':net_target7
+    })
+    network_daily.to_csv(OUT/f'task7_{prefix}_network_daily_inventory.csv',index=False)
+
+    fig,ax=plt.subplots(figsize=(10,5))
+    ax.plot(network_daily.Day,network_daily.TotalFCInventory_3wk99,label='Total FC inventory (3-week, 99%)')
+    ax.plot(network_daily.Day,network_daily.DCInventory_6wk99,label='DC inventory (increment to 6-week, 99%)')
+    ax.plot(network_daily.Day,network_daily.TotalNetworkInventory_6wk99,label='Network inventory (6-week, 99%)')
+    ax.set(xlabel='Day',ylabel='Units',title=f'Task 7 - {cfg_name} Daily Robust Inventory Targets')
+    ax.legend(); ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/f'task7_{prefix}_daily_inventory_profile.png',dpi=220); plt.close(fig)
+
+    fig,ax=plt.subplots(figsize=(8,5))
+    for lab in ['50','68','95','99']:
+        q=robust7[robust7.Robustness==lab]
+        ax.plot(q.Weeks,q.MaxNetworkInventory,marker='o',label=f'{lab}%')
+    ax.set(xticks=[4,6,8],xlabel='Network autonomy period (weeks)',ylabel='Maximum network inventory (units)',
+           title=f'Task 7 - {cfg_name} Autonomy / Robustness Comparison')
+    ax.legend(title='Robustness'); ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/f'task7_{prefix}_autonomy_robustness.png',dpi=220); plt.close(fig)
+
+    task7_config_rows.append([cfg_name,float(fc_total7.max()),float(dc_target7.max()),float(net_target7.max())])
+    task7_results[cfg_name]={'fc_daily':fc_daily,'fc_max':fc_max,'robustness':robust7,'network_daily':network_daily}
+
+task7_configuration_summary=pd.DataFrame(task7_config_rows,columns=['Configuration','MaxFCInventory_3wk99','MaxDCInventory_6wk99','MaxNetworkInventory_6wk99'])
+task7_configuration_summary.to_csv(OUT/'task7_configuration_summary.csv',index=False)
+fig,ax=plt.subplots(figsize=(8,5)); x=np.arange(len(task7_configuration_summary)); w=.25
+ax.bar(x-w,task7_configuration_summary.MaxFCInventory_3wk99,w,label='FC total')
+ax.bar(x,task7_configuration_summary.MaxDCInventory_6wk99,w,label='DC')
+ax.bar(x+w,task7_configuration_summary.MaxNetworkInventory_6wk99,w,label='Network')
+ax.set_xticks(x,task7_configuration_summary.Configuration); ax.set_ylabel('Maximum inventory (units)')
+ax.set_title('Task 7 - Base 3-week FC / 6-week Network, 99% Robustness'); ax.legend(); ax.grid(axis='y',alpha=.15)
+fig.tight_layout(); fig.savefig(FIG/'task7_configuration_inventory_comparison.png',dpi=220); plt.close(fig)
+
+# Preserve the 15-FC Task 7 objects for the existing downstream Tasks 8-10.
+fc_mean={fc:task7_results['15-FC']['fc_daily'][f'{fc}_MeanDailyDemand'].to_numpy() for fc in FC15}
+fc_sd={fc:task7_results['15-FC']['fc_daily'][f'{fc}_StdDailyDemand'].to_numpy() for fc in FC15}
+fc_target={fc:task7_results['15-FC']['fc_daily'][f'{fc}_TargetInventory_3wk99'].to_numpy() for fc in FC15}
+fc_total=task7_results['15-FC']['network_daily']['TotalFCInventory_3wk99'].to_numpy()
+robust=task7_results['15-FC']['robustness'].copy()
+network_targets={(Lw,lab):(forward_robust(mean_daily,sd_daily,Lw*7,z))
+                 for Lw in [4,6,8] for lab,z in [('50',0),('68',1),('95',1.65),('99',2.33)]}
+net_target=network_targets[(6,'99')]
+dc_target=np.maximum(net_target-fc_total,0)
 pursuit=np.maximum(0,mean_daily+np.r_[net_target[0],np.diff(net_target)])
 const=float(pursuit.sum()/DAYS)
 cum_gap=np.cumsum(pursuit-const); backlog=np.maximum(cum_gap,0); preprod=float(max(0,cum_gap.max()))
