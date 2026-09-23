@@ -373,6 +373,54 @@ ax.set_yticks([1,2,3,4,5,6],['1','2','3','4','5','5+'])
 ax.set(xlabel='FC configuration',ylabel='Optimal delivery promise (days)',title='Task 5 - Optimal Delivery Promise by Network Configuration')
 ax.legend(); ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task5_optimal_promise_comparison.png',dpi=220); plt.close(fig)
 
+# Task 6: optimize OTD promise separately for each market type for all three FC configurations.
+# Exhaustive enumeration is exact here because the objective is additive across market types
+# and Task 6 introduces no cross-market capacity constraint.
+task6_network_rows=[]
+for cfg_name,(cfg6,_,_,_) in task4_results.items():
+    prefix=cfg_name.replace('-','').lower()
+    econ6=[]
+    for mt in ['Primary','Secondary','Tertiary']:
+        sub=cfg6[cfg6.Market==mt].copy()
+        potential_units=TS_ANNUAL*sub.PMF.sum()
+        for j,promise in enumerate(promises):
+            c=conv[mt][j]
+            units=potential_units*c; revenue=units*PRICE
+            sc=(TS_ANNUAL*sub.PMF*c*sub.ClosestZone.astype(int).map(lambda z:ship[z-1,j])).sum()
+            cogs=units*COGS; net=revenue-sc; gp=net-cogs
+            econ6.append([mt,promise,potential_units,c,units,revenue,sc,cogs,net,gp])
+    econ6=pd.DataFrame(econ6,columns=['Market','PromiseDays','PotentialUnits','ConversionRate','ConvertedUnits','Revenue','ShippingCost','COGS','NetRevenue','GrossProfit'])
+    opt6=econ6.loc[econ6.groupby('Market').GrossProfit.idxmax()].copy()
+    sum_cols=['PotentialUnits','ConvertedUnits','Revenue','ShippingCost','COGS','NetRevenue','GrossProfit']
+    totals6=opt6[sum_cols].sum()
+    overall6=pd.DataFrame([{'Market':'Overall','PromiseDays':'Market-specific',**{c:float(totals6[c]) for c in sum_cols}}])
+    pd.concat([opt6,overall6],ignore_index=True,sort=False).to_csv(OUT/f'{prefix}_task6_optimal.csv',index=False)
+    policy_detail=[]; policy_rows=[]
+    for label,promise in [('Optimized',None),('1-day all','1'),('5+ day all','5+')]:
+        x=opt6.copy() if promise is None else econ6[econ6.PromiseDays==promise].copy()
+        x.insert(0,'Policy',label); policy_detail.append(x)
+        t=x[sum_cols].sum(); policy_rows.append([label,*[float(t[c]) for c in sum_cols]])
+    pd.concat(policy_detail,ignore_index=True).to_csv(OUT/f'{prefix}_task6_policy_market_detail.csv',index=False)
+    policy6=pd.DataFrame(policy_rows,columns=['Policy',*sum_cols])
+    policy6.to_csv(OUT/f'{prefix}_task6_policy_compare.csv',index=False)
+    task6_network_rows.append([cfg_name,
+        str(opt6.loc[opt6.Market=='Primary','PromiseDays'].iloc[0]),
+        str(opt6.loc[opt6.Market=='Secondary','PromiseDays'].iloc[0]),
+        str(opt6.loc[opt6.Market=='Tertiary','PromiseDays'].iloc[0]),
+        float(totals6.GrossProfit)])
+    fig,ax=plt.subplots(figsize=(9,5)); piv=econ6.pivot(index='PromiseDays',columns='Market',values='GrossProfit').reindex(promises)
+    piv.plot(kind='bar',ax=ax); ax.set(xlabel='OTD promise (days)',ylabel='Gross operating profit ($)',title=f'Task 6 - {cfg_name} Gross Profit by OTD Promise')
+    ax.grid(axis='y',alpha=.15); fig.tight_layout(); fig.savefig(FIG/f'task6_{prefix}_gross_profit_by_otd.png',dpi=220); plt.close(fig)
+    fig,ax=plt.subplots(figsize=(8,5)); ax.bar(policy6.Policy,policy6.GrossProfit)
+    ax.set(xlabel='Policy',ylabel='Gross operating profit ($)',title=f'Task 6 - {cfg_name} Policy Comparison')
+    ax.grid(axis='y',alpha=.15); fig.tight_layout(); fig.savefig(FIG/f'task6_{prefix}_policy_comparison.png',dpi=220); plt.close(fig)
+
+task6_network=pd.DataFrame(task6_network_rows,columns=['Configuration','PrimaryOTD','SecondaryOTD','TertiaryOTD','OptimizedGrossProfit'])
+task6_network.to_csv(OUT/'task6_network_optimized_summary.csv',index=False)
+fig,ax=plt.subplots(figsize=(8,5)); ax.bar(task6_network.Configuration,task6_network.OptimizedGrossProfit)
+ax.set(title='Task 6 - Optimized Gross Profit by FC Configuration',ylabel='Gross operating profit ($)')
+ax.grid(axis='y',alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task6_network_optimized_gross_profit.png',dpi=220); plt.close(fig)
+
 # Keep the 15-FC Task 5 objects as downstream defaults for existing Tasks 6-10.
 econ=task5_optimal_all[task5_optimal_all.Configuration=='15-FC'].copy()
 opt=econ.copy()
