@@ -687,20 +687,66 @@ for var,vals in [('q',[.93,.98,1.00]),('r',[.90,.95,.99]),('e',[.85,.90,.95])]:
 sensitivity=pd.DataFrame(sens,columns=['Parameter','Value','UnitsPerResourceDay','TotalResources','AnnualContractOM','OneTimeSetup','CapacityCost'])
 sensitivity.to_csv(OUT/'task9_15fc_sensitivity.csv',index=False)
 
-# Storage-tier input profile. Appendix 1 supplies only the base storage numeric rates;
-# seasonal and peak-and-extreme rates are absent, so a true lowest-cost three-tier split
-# cannot be numerically optimized from the supplied case data.
+# Storage tiers and cost accounting under the instructed common-rate assumption.
+# Base, Seasonal, and Peak/Extreme storage all use the same $6.60 per unit-day O&M rate.
+# The $46.20 per-unit setup/increase rate is charged only for positive capacity increases;
+# decreases receive no credit. Because all tiers use the same O&M rate, the economic
+# optimum is non-unique by tier label. For transparent reporting, Base = annual minimum,
+# Seasonal = capacity from the minimum through the 95th percentile, and Peak/Extreme =
+# the remaining top-5% tail. Total cost is invariant to this reporting split.
+STORAGE_OM=6.60
+STORAGE_SETUP=46.20
+SEASONAL_PCT=95.0
+
+def storage_tier_cost(profile):
+    x=np.asarray(profile,dtype=float)
+    base_units=float(x.min())
+    p95=float(np.percentile(x,SEASONAL_PCT))
+    peak_units=float(x.max())
+    seasonal_units=max(0.0,p95-base_units)
+    peak_extreme_units=max(0.0,peak_units-p95)
+    base_use=np.minimum(x,base_units)
+    seasonal_use=np.minimum(np.maximum(x-base_units,0.0),seasonal_units)
+    peak_use=np.maximum(x-base_units-seasonal_units,0.0)
+
+    def pos_increase_cost(u):
+        inc=np.maximum(np.diff(np.r_[0.0,u]),0.0)
+        return float(inc.sum()),float(inc.sum()*STORAGE_SETUP)
+
+    b_inc,b_setup=pos_increase_cost(base_use)
+    s_inc,s_setup=pos_increase_cost(seasonal_use)
+    p_inc,p_setup=pos_increase_cost(peak_use)
+    b_om=float(base_use.sum()*STORAGE_OM)
+    s_om=float(seasonal_use.sum()*STORAGE_OM)
+    p_om=float(peak_use.sum()*STORAGE_OM)
+    return [base_units,seasonal_units,peak_extreme_units,peak_units,
+            float(base_use.sum()),float(seasonal_use.sum()),float(peak_use.sum()),
+            b_om,s_om,p_om,b_inc,s_inc,p_inc,b_setup,s_setup,p_setup,
+            b_om+s_om+p_om,b_setup+s_setup+p_setup,b_om+s_om+p_om+b_setup+s_setup+p_setup]
+
 storage_rows=[]
 for fc,sfc in sims.items():
-    prof=sfc.OnHand.to_numpy(); base_units=float(prof.min()); peak_units=float(prof.max())
-    base_cost=base_units*6.60*DAYS+base_units*46.20
-    storage_rows.append([fc,base_units,peak_units,peak_units-base_units,base_cost,'Seasonal/peak rates not supplied'])
+    storage_rows.append([fc,*storage_tier_cost(sfc.OnHand.to_numpy())])
 retained_dc=dc_target+full_pre_inv
-base_units=float(retained_dc.min()); peak_units=float(retained_dc.max())
-base_cost=base_units*6.60*DAYS+base_units*46.20
-storage_rows.append(['DC-GA-303',base_units,peak_units,peak_units-base_units,base_cost,'Seasonal/peak rates not supplied'])
-storage=pd.DataFrame(storage_rows,columns=['Facility','YearRoundBaseUnits','PeakInventoryUnits','VariableAboveBaseUnits','BaseTierAnnualPlusSetupCost','TierOptimizationStatus'])
-storage.to_csv(OUT/'task9_15fc_storage_tier_inputs.csv',index=False)
+storage_rows.append(['DC-GA-303',*storage_tier_cost(retained_dc)])
+storage_cols=['Facility','BaseCapacityUnits','SeasonalCapacityUnits','PeakExtremeCapacityUnits','PeakInventoryUnits',
+              'BaseUnitDays','SeasonalUnitDays','PeakExtremeUnitDays','BaseOMCost','SeasonalOMCost','PeakExtremeOMCost',
+              'BaseSetupIncreaseUnits','SeasonalSetupIncreaseUnits','PeakExtremeSetupIncreaseUnits',
+              'BaseSetupCost','SeasonalSetupCost','PeakExtremeSetupCost','TotalOMCost','TotalSetupCost','TotalStorageCost']
+storage=pd.DataFrame(storage_rows,columns=storage_cols)
+storage.to_csv(OUT/'task9_15fc_storage_tier_costs.csv',index=False)
+storage_summary=pd.DataFrame([{
+    'OMRatePerUnitDay':STORAGE_OM,
+    'SetupRatePerUnitIncrease':STORAGE_SETUP,
+    'SeasonalReportingPercentile':SEASONAL_PCT,
+    'TotalBaseCapacityUnits':storage.BaseCapacityUnits.sum(),
+    'TotalSeasonalCapacityUnits':storage.SeasonalCapacityUnits.sum(),
+    'TotalPeakExtremeCapacityUnits':storage.PeakExtremeCapacityUnits.sum(),
+    'TotalOMCost':storage.TotalOMCost.sum(),
+    'TotalSetupCost':storage.TotalSetupCost.sum(),
+    'TotalStorageCost':storage.TotalStorageCost.sum()
+}])
+storage_summary.to_csv(OUT/'task9_15fc_storage_cost_summary.csv',index=False)
 
 params=[]; comp=[]
 for fc in FC15:
@@ -713,6 +759,6 @@ task10=pd.DataFrame(params,columns=['FC','DemandShare','RADdays','IntervalDays',
 task10comp=pd.DataFrame(comp,columns=['FC','UniformAvgInventory','UniformFloored27','ProposedAvgInventory','ProposedFloored27'])
 outputs={'task1_usa_summary':usa_summary,'task1_market_summary':market_summary,'task1_state_summary':state_summary,'task1_zip_summary':zip_summary,'task2_scenario_stats':pd.DataFrame([scen_stats]),'task3_fc_summary':fc_summary,'task3_fc_market':fc_market,'task3_distance_market':dist_market,'task4_zip_clusters':base[['ZIP3','Lat','Lon','ClosestFC','ClosestZone','Cluster','FCCount','PMF']],'task4_alloc_distance':alloc_dist,'task5_economics':econ,'task7_robustness':robust,'task8_production':prod_compare,'task9_throughput':thr,'task9_sensitivity':sensitivity,'task10_policy':task10,'task10_compare':task10comp}
 for name,df in outputs.items(): df.to_csv(OUT/f'{name}.csv',index=False)
-summary={'market_annual':MARKET_ANNUAL,'tsukumo_annual':TS_ANNUAL,'single_fc_demand_share':single_share,'scenario_stats':scen_stats,'optimized_policy':opt[['Market','PromiseDays']].to_dict('records'),'optimized_totals':optimized.to_dict(),'eff_per_resource':eff_per_resource,'missing_storage_rates_note':'Appendix 1 supplies only base storage O&M and setup rates; seasonal and peak-and-extreme rates are not numerically supplied, so lowest-cost tier optimization cannot be completed without class-provided rates.'}
+summary={'market_annual':MARKET_ANNUAL,'tsukumo_annual':TS_ANNUAL,'single_fc_demand_share':single_share,'scenario_stats':scen_stats,'optimized_policy':opt[['Market','PromiseDays']].to_dict('records'),'optimized_totals':optimized.to_dict(),'eff_per_resource':eff_per_resource,'missing_storage_rates_note':'Storage tiers use the instructed common $6.60/unit/day O&M rate. The $46.20/unit setup charge applies only to positive capacity increases, with no credit for decreases; the P95 split is a reporting convention because identical tier rates make the cost-minimizing label split non-unique.'}
 (OUT/'summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
 print(json.dumps(summary,indent=2))
