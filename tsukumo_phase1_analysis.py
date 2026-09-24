@@ -748,15 +748,78 @@ storage_summary=pd.DataFrame([{
 }])
 storage_summary.to_csv(OUT/'task9_15fc_storage_cost_summary.csv',index=False)
 
-params=[]; comp=[]
-for fc in FC15:
-    avg=fc_mean[fc].mean(); interval=int(min(14,max(7,math.ceil(35/max(avg,1e-9)))))
+# Task 10: FC-specific replenishment policy.
+# Relationship implied by the 21-day target: after replenishment, robust autonomy is
+# approximately 21 days. With threshold H, the threshold trigger becomes active after
+# about 21-H days. Therefore the effective cycle is min(I, 21-H), where I is the
+# scheduled replenishment interval. We require H >= RAD + 3 days to retain a transparent
+# three-day forecast-error margin. Candidate intervals I=1,...,21-H are simulated.
+# The proposed interval minimizes average inventory among policies with <=5% of
+# replenishment orders floored at the 27-unit minimum; if none meets that service-design
+# criterion, choose the lowest floor-rate policy and flag the FC for viability review.
+task10_rows=[]; task10_comp_rows=[]; task10_daily_frames=[]
+for j,fc in enumerate(FC15):
     threshold=min(20,RAD[fc]+3)
-    s=simulate_fc(fc,interval,threshold); u=sims[fc]
-    params.append([fc,float(base.loc[base.ClosestFC==fc,'PMF'].sum()),RAD[fc],interval,threshold,float(s.OnHand.mean()),int(s.Floored27.sum()),int((s.ReplenishmentQty>0).sum())])
-    comp.append([fc,float(u.OnHand.mean()),int(u.Floored27.sum()),float(s.OnHand.mean()),int(s.Floored27.sum())])
-task10=pd.DataFrame(params,columns=['FC','DemandShare','RADdays','IntervalDays','ThresholdDays','AvgInventory','Floored27Count','ShipmentCount'])
-task10comp=pd.DataFrame(comp,columns=['FC','UniformAvgInventory','UniformFloored27','ProposedAvgInventory','ProposedFloored27'])
+    max_interval=max(1,21-threshold)
+    candidates=[]
+    for interval in range(1,max_interval+1):
+        cand=simulate_fc(fc,interval,threshold)
+        orders=cand[cand.ReplenishmentQty>0]
+        floor_rate=float(orders.Floored27.mean()) if len(orders) else 0.0
+        candidates.append((interval,floor_rate,float(cand.OnHand.mean()),len(orders),cand))
+    feasible=[x for x in candidates if x[1]<=0.05]
+    if feasible:
+        interval,floor_rate,avg_inv,shipments,proposed=min(feasible,key=lambda x:(x[2],x[1],x[0]))
+    else:
+        interval,floor_rate,avg_inv,shipments,proposed=min(candidates,key=lambda x:(x[1],x[2],x[0]))
+    uniform=sims[fc]
+    uorders=uniform[uniform.ReplenishmentQty>0]
+    porders=proposed[proposed.ReplenishmentQty>0]
+    demand_share=float((base.PMF.to_numpy()[:,None]*W)[:,fc_index[fc]].sum())
+    median_qty=float(porders.ReplenishmentQty.median()) if len(porders) else 0.0
+    max_typical_qty=float(d99[fc].mean()*max_interval)
+    viable=bool(max_typical_qty>=27.0)
+    governing='Interval' if interval<=max_interval else 'Threshold'
+    task10_rows.append([
+        fc,demand_share,RAD[fc],float(d99[fc].mean()),threshold,interval,max_interval,
+        governing,shipments,int(proposed.Floored27.sum()),floor_rate,median_qty,avg_inv,
+        float(uniform.OnHand.mean()),int(uniform.Floored27.sum()),
+        float(uorders.Floored27.mean()) if len(uorders) else 0.0,viable,max_typical_qty
+    ])
+    proposed.assign(FC=fc).to_csv(OUT/f'task10_{fc}_proposed_daily.csv',index=False)
+
+task10=pd.DataFrame(task10_rows,columns=[
+    'FC','DemandShare','RADdays','AvgRobustDailyDemand','ThresholdDays','IntervalDays',
+    'ThresholdTriggerDay','GoverningTrigger','ShipmentCount','Floored27Count','FloorRate',
+    'MedianShipmentQty','ProposedAvgInventory','UniformAvgInventory','UniformFloored27Count',
+    'UniformFloorRate','FTLMinimumViable','MaxTypicalQtyBeforeThreshold'
+])
+task10['AvgInventoryReductionPct']=100*(task10.UniformAvgInventory-task10.ProposedAvgInventory)/task10.UniformAvgInventory
+task10.to_csv(OUT/'task10_fc_policy_summary.csv',index=False)
+
+task10comp=task10[[
+    'FC','DemandShare','RADdays','ThresholdDays','IntervalDays','GoverningTrigger',
+    'ShipmentCount','Floored27Count','FloorRate','MedianShipmentQty','ProposedAvgInventory',
+    'UniformAvgInventory','UniformFloored27Count','UniformFloorRate','AvgInventoryReductionPct',
+    'FTLMinimumViable','MaxTypicalQtyBeforeThreshold'
+]].copy()
+task10comp.to_csv(OUT/'task10_policy_comparison.csv',index=False)
+
+fig,ax=plt.subplots(figsize=(12,5))
+x=np.arange(len(task10)); w=.38
+ax.bar(x-w/2,task10.UniformAvgInventory,w,label='Uniform 7/14')
+ax.bar(x+w/2,task10.ProposedAvgInventory,w,label='FC-specific')
+ax.set_xticks(x,task10.FC,rotation=55,ha='right')
+ax.set(ylabel='Average on-hand inventory (units)',title='Task 10 - Average Inventory: Uniform vs FC-Specific Policy')
+ax.legend(); ax.grid(axis='y',alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task10_average_inventory_comparison.png',dpi=220); plt.close(fig)
+
+fig,ax=plt.subplots(figsize=(12,5))
+ax.bar(x-w/2,task10.UniformFloorRate*100,w,label='Uniform 7/14')
+ax.bar(x+w/2,task10.FloorRate*100,w,label='FC-specific')
+ax.set_xticks(x,task10.FC,rotation=55,ha='right')
+ax.set(ylabel='Orders floored at 27 units (%)',title='Task 10 - 27-Unit Minimum Frequency')
+ax.legend(); ax.grid(axis='y',alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task10_floor_rate_comparison.png',dpi=220); plt.close(fig)
+
 outputs={'task1_usa_summary':usa_summary,'task1_market_summary':market_summary,'task1_state_summary':state_summary,'task1_zip_summary':zip_summary,'task2_scenario_stats':pd.DataFrame([scen_stats]),'task3_fc_summary':fc_summary,'task3_fc_market':fc_market,'task3_distance_market':dist_market,'task4_zip_clusters':base[['ZIP3','Lat','Lon','ClosestFC','ClosestZone','Cluster','FCCount','PMF']],'task4_alloc_distance':alloc_dist,'task5_economics':econ,'task7_robustness':robust,'task8_production':prod_compare,'task9_throughput':thr,'task9_sensitivity':sensitivity,'task10_policy':task10,'task10_compare':task10comp}
 for name,df in outputs.items(): df.to_csv(OUT/f'{name}.csv',index=False)
 summary={'market_annual':MARKET_ANNUAL,'tsukumo_annual':TS_ANNUAL,'single_fc_demand_share':single_share,'scenario_stats':scen_stats,'optimized_policy':opt[['Market','PromiseDays']].to_dict('records'),'optimized_totals':optimized.to_dict(),'eff_per_resource':eff_per_resource,'missing_storage_rates_note':'Storage tiers use the instructed common $6.60/unit/day O&M rate. The $46.20/unit setup charge applies only to positive capacity increases, with no credit for decreases; the P95 split is a reporting convention because identical tier rates make the cost-minimizing label split non-unique.'}
