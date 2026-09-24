@@ -525,7 +525,8 @@ dc_target=np.maximum(net_target-fc_total,0)
 # Task 8: AF production strategies based on the Task 7 6-week/99% network target.
 # Required AF production on day t equals customer demand plus the positive/negative
 # change in the desired network inventory target. Day 1 includes the initial target fill.
-pursuit=np.maximum(0,mean_daily+np.r_[net_target[0],np.diff(net_target)])
+target_change=np.diff(net_target,prepend=net_target[-1])
+pursuit=np.maximum(0,mean_daily+target_change)
 
 def simulate_production(rate,initial_extra=0.0):
     """Track production surplus/shortage relative to the pursuit requirement."""
