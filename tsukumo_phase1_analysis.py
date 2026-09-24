@@ -522,9 +522,9 @@ network_targets={(Lw,lab):(forward_robust(mean_daily,sd_daily,Lw*7,z))
                  for Lw in [4,6,8] for lab,z in [('50',0),('68',1),('95',1.65),('99',2.33)]}
 net_target=network_targets[(6,'99')]
 dc_target=np.maximum(net_target-fc_total,0)
-# Task 8: AF production strategies based on the Task 7 6-week/99% network target.
-# Required AF production on day t equals customer demand plus the positive/negative
-# change in the desired network inventory target. Day 1 includes the initial target fill.
+# Task 8: AP (Assembly Plant) production strategies based on the Task 7 6-week/99% network target.
+# Required AP production on day t equals customer demand plus the positive/negative
+# change in the desired network inventory target. The planning horizon is treated as a repeating seasonal cycle, so Day 1 changes from Day 364 to Day 1 rather than assuming zero opening inventory.
 target_change=np.diff(net_target,prepend=net_target[-1])
 pursuit=np.maximum(0,mean_daily+target_change)
 
@@ -559,6 +559,9 @@ def backlog_duration(x):
 
 task8_daily=pd.DataFrame({
     'Day':np.arange(1,DAYS+1),
+    'MeanDemand':mean_daily,
+    'NetworkTarget_6wk99':net_target,
+    'TargetInventoryChange_Cyclic':target_change,
     'PursuitRequirement':pursuit,
     'FullSmoothingRate':full_rate,
     'FullSmoothingBacklog':full_back,
@@ -586,7 +589,7 @@ fig,ax=plt.subplots(figsize=(11,5))
 ax.plot(np.arange(1,DAYS+1),pursuit,label='Pursuit requirement',alpha=.75)
 ax.plot(np.arange(1,DAYS+1),full_rate,label='Full smoothing')
 ax.plot(np.arange(1,DAYS+1),seg,label='Segmented smoothing')
-ax.legend(); ax.set(title='Task 8 - AF Production Strategy Profiles',xlabel='Day',ylabel='Units/day')
+ax.legend(); ax.set(title='Task 8 - AP Production Strategy Profiles',xlabel='Day',ylabel='AP production (units/day)')
 ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task8_production_strategy_profiles.png',dpi=220); plt.close(fig)
 
 fig,ax=plt.subplots(figsize=(10,5))
