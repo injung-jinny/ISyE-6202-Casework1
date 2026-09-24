@@ -570,9 +570,9 @@ task8_daily.to_csv(OUT/'task8_daily_production_profiles.csv',index=False)
 
 prod_compare=pd.DataFrame([
  ['Pursuit',float(pursuit.max()),0.0,0,0.0,float(dc_target.max())],
- ['Full smoothing - no preproduction',const,float(full_back.max()),backlog_duration(full_back),0.0,float(dc_target.max()+full_inv.max())],
- ['Full smoothing - with preproduction',const,0.0,0,full_pre,float(dc_target.max()+full_pre_inv.max())],
- ['Segmented smoothing (4 x 13 weeks)',float(seg.max()),0.0,0,seg_pre,float(dc_target.max()+seg_inv.max())]
+ ['Full smoothing - no preproduction',const,float(full_back.max()),backlog_duration(full_back),0.0,float((dc_target+full_inv).max())],
+ ['Full smoothing - with preproduction',const,0.0,0,full_pre,float((dc_target+full_pre_inv).max())],
+ ['Segmented smoothing (4 x 13 weeks)',float(seg.max()),0.0,0,seg_pre,float((dc_target+seg_inv).max())]
 ],columns=['Strategy','MaxDailyProduction','MaxBacklog','BacklogDays','Preproduction','MaxDCInventory'])
 prod_compare.to_csv(OUT/'task8_production_strategy_comparison.csv',index=False)
 
