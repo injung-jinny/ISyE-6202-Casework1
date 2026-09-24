@@ -3,7 +3,10 @@ import math, json
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from bokeh.sampledata.us_states import data as US_STATES
+try:
+    from bokeh.sampledata.us_states import data as US_STATES
+except (ImportError, ModuleNotFoundError, RuntimeError):
+    US_STATES={}  # Plotting fallback when optional bokeh_sampledata is unavailable
 
 ROOT=Path(__file__).resolve().parent
 OUT=ROOT/'tsukumo_outputs'; FIG=OUT/'figures'; OUT.mkdir(exist_ok=True); FIG.mkdir(exist_ok=True)
@@ -179,7 +182,7 @@ ax.set(title='Task 2 - Annual Tsukumo Demand Scenario Distribution',xlabel='Annu
 ax.legend(); ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task2_annual_scenario_distribution.png',dpi=220); plt.close(fig)
 
 fig,ax=plt.subplots(figsize=(12,5.5))
-ax.plot(task2_daily.Day,task2_daily.MeanDemand,label='Mean daily demand',linewidth=1.4)
+ax.plot(task2_daily.Day,task2_daily.MeanDailyDemand,label='Mean daily demand',linewidth=1.4)
 ax.plot(task2_daily.Day,task2_daily.RobustUpper68,label='68% robust upper',linewidth=1.0,alpha=.8)
 ax.plot(task2_daily.Day,task2_daily.RobustUpper95,label='95% robust upper',linewidth=1.0,alpha=.8)
 ax.plot(task2_daily.Day,task2_daily.RobustUpper99,label='99% robust upper',linewidth=1.2)
@@ -822,6 +825,6 @@ ax.legend(); ax.grid(axis='y',alpha=.15); fig.tight_layout(); fig.savefig(FIG/'t
 
 outputs={'task1_usa_summary':usa_summary,'task1_market_summary':market_summary,'task1_state_summary':state_summary,'task1_zip_summary':zip_summary,'task2_scenario_stats':pd.DataFrame([scen_stats]),'task3_fc_summary':fc_summary,'task3_fc_market':fc_market,'task3_distance_market':dist_market,'task4_zip_clusters':base[['ZIP3','Lat','Lon','ClosestFC','ClosestZone','Cluster','FCCount','PMF']],'task4_alloc_distance':alloc_dist,'task5_economics':econ,'task7_robustness':robust,'task8_production':prod_compare,'task9_throughput':thr,'task9_sensitivity':sensitivity,'task10_policy':task10,'task10_compare':task10comp}
 for name,df in outputs.items(): df.to_csv(OUT/f'{name}.csv',index=False)
-summary={'market_annual':MARKET_ANNUAL,'tsukumo_annual':TS_ANNUAL,'single_fc_demand_share':single_share,'scenario_stats':scen_stats,'optimized_policy':opt[['Market','PromiseDays']].to_dict('records'),'optimized_totals':optimized.to_dict(),'eff_per_resource':eff_per_resource,'missing_storage_rates_note':'Storage tiers use the instructed common $6.60/unit/day O&M rate. The $46.20/unit setup charge applies only to positive capacity increases, with no credit for decreases; the P95 split is a reporting convention because identical tier rates make the cost-minimizing label split non-unique.'}
+summary={'market_annual':MARKET_ANNUAL,'tsukumo_annual':TS_ANNUAL,'single_fc_demand_share':single_share,'scenario_stats':scen_stats,'optimized_policy':opt[['Market','PromiseDays']].to_dict('records'),'optimized_totals':optimized.to_dict(),'units_per_resource':units_per_resource,'missing_storage_rates_note':'Storage tiers use the instructed common $6.60/unit/day O&M rate. The $46.20/unit setup charge applies only to positive capacity increases, with no credit for decreases; the P95 split is a reporting convention because identical tier rates make the cost-minimizing label split non-unique.'}
 (OUT/'summary.json').write_text(json.dumps(summary,indent=2),encoding='utf-8')
 print(json.dumps(summary,indent=2))
