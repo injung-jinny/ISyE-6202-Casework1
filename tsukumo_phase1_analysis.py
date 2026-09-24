@@ -600,47 +600,108 @@ ax.plot(np.arange(1,DAYS+1),seg_inv,label='Segmented smoothing anticipatory inve
 ax.legend(); ax.set(title='Task 8 - Backlog and Anticipatory Inventory',xlabel='Day',ylabel='Units')
 ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task8_backlog_inventory_profiles.png',dpi=220); plt.close(fig)
 
+# Task 9: uniform 7-day replenishment interval and 14-day minimum robust-autonomy threshold.
 d99={fc:fc_mean[fc]+2.33*fc_sd[fc] for fc in FC15}
 def simulate_fc(fc,interval=7,threshold=14):
-    demand=d99[fc]; target=fc_target[fc]; lead=RAD[fc]; onhand=target[0]; pipeline=[]; last_ship=-interval; rows=[]
+    demand=d99[fc]; target=fc_target[fc]; lead=RAD[fc]
+    onhand=float(target[0]); pipeline=[]; last_ship=-interval; rows=[]
     for t in range(DAYS):
-        arrivals=sum(q for day,q in pipeline if day==t); onhand+=arrivals; pipeline=[x for x in pipeline if x[0]>t]
-        onhand=max(0,onhand-demand[t]); position=onhand+sum(q for _,q in pipeline)
-        cum=0; autonomy=0
+        arrivals=sum(q for day,q in pipeline if day==t)
+        onhand+=arrivals; pipeline=[x for x in pipeline if x[0]>t]
+        onhand=max(0.0,onhand-float(demand[t]))
+        position=onhand+sum(q for _,q in pipeline)
+        cum=0.0; autonomy=0
         for h in range(1,22):
-            cum+=demand[(t+h)%DAYS]
+            cum+=float(demand[(t+h)%DAYS])
             if position+1e-9>=cum: autonomy=h
             else: break
         due=(t-last_ship)>=interval; breach=autonomy<threshold
-        qty=0; floored=False
+        qty=0.0; floored=False
         if (breach or due) and autonomy<21:
-            qty=max(target[t]-position,27); floored=qty<=27+1e-9; pipeline.append((min(t+lead,DAYS-1),qty)); last_ship=t
-        rows.append([t,onhand,position,autonomy,qty,floored,arrivals,demand[t]])
+            required=max(float(target[t])-position,0.0)
+            qty=max(required,27.0); floored=required<27.0
+            arrival_day=t+lead
+            if lead==0:
+                # Table 4 RAD=T: shipment is available at the FC on departure day T.
+                onhand+=qty; position+=qty; arrivals+=qty
+            elif arrival_day<DAYS:
+                pipeline.append((arrival_day,qty))
+            last_ship=t
+        rows.append([t+1,onhand,position,autonomy,qty,floored,arrivals,float(demand[t])])
     return pd.DataFrame(rows,columns=['Day','OnHand','InventoryPosition','RobustAutonomyDays','ReplenishmentQty','Floored27','Arrivals','OutboundDemand'])
+
 sims={fc:simulate_fc(fc) for fc in FC15}
-thr=[]
-for fc in FC15:
-    s=sims[fc]; req=float((s.Arrivals+s.OutboundDemand).max()); thr.append([fc,req])
-thr=pd.DataFrame(thr,columns=['Facility','MaxDailyThroughputUnits'])
-outdc=np.zeros(DAYS)
-for fc,s in sims.items(): outdc+=s.ReplenishmentQty.values
-dc_req=float((outdc+const).max()); thr=pd.concat([thr,pd.DataFrame([['DC-GA-303',dc_req]],columns=thr.columns)],ignore_index=True)
-eff_per_resource=40*.98*.90*.95*.90
-thr['RawResources']=thr.MaxDailyThroughputUnits/eff_per_resource
+replen_rows=[]
+for fc,sfc in sims.items():
+    sfc.to_csv(OUT/f'task9_15fc_{fc}_daily_replenishment.csv',index=False)
+    orders=sfc[sfc.ReplenishmentQty>0]
+    replen_rows.append([fc,int(len(orders)),float(orders.ReplenishmentQty.mean()) if len(orders) else 0.0,
+                        float(orders.ReplenishmentQty.max()) if len(orders) else 0.0,
+                        float(orders.ReplenishmentQty.sum()),int(sfc.Floored27.sum())])
+replen_summary=pd.DataFrame(replen_rows,columns=['FC','ShipmentCount','AverageShipmentUnits','MaxShipmentUnits','AnnualReplenishmentUnits','Floored27Count'])
+replen_summary.to_csv(OUT/'task9_15fc_replenishment_summary.csv',index=False)
+
+fc_rows=[]
+for fc,sfc in sims.items():
+    daily_move=sfc.Arrivals+sfc.OutboundDemand
+    fc_rows.append([fc,'FC',float(daily_move.max()),int(sfc.loc[daily_move.idxmax(),'Day'])])
+dc_outbound=np.zeros(DAYS)
+for sfc in sims.values(): dc_outbound+=sfc.ReplenishmentQty.to_numpy()
+
+ap_profiles={'Pursuit':pursuit,'Full smoothing with pre-production':full_rate,'Segmented smoothing':seg}
+dc_rows=[]
+for strategy,dc_inbound in ap_profiles.items():
+    dc_daily=dc_inbound+dc_outbound
+    dc_rows.append([strategy,float(dc_inbound.max()),float(dc_outbound.max()),float(dc_daily.max()),int(np.argmax(dc_daily)+1)])
+dc_strategy=pd.DataFrame(dc_rows,columns=['ProductionStrategy','MaxDCInboundUnits','MaxDCOutboundUnits','MaxDailyDCThroughputUnits','PeakDay'])
+dc_strategy.to_csv(OUT/'task9_15fc_dc_throughput_by_production_strategy.csv',index=False)
+
+q0,a0,r0,e0=.98,.90,.95,.90; handling_min=12.0; shift_min=480.0
+units_per_resource=(shift_min/handling_min)*q0*a0*r0*e0
 def round_f(x):
     lo=math.floor(x); return lo if x-lo<=.3 else math.ceil(x)
-thr['Resources']=thr.RawResources.map(round_f)
-thr['ResidualUnitsIfRoundedDown']=np.maximum(0,thr.MaxDailyThroughputUnits-thr.Resources*eff_per_resource)
+resource_rows=[]
+for fac,basis,peak,day in fc_rows:
+    raw=peak/units_per_resource; n=round_f(raw)
+    resource_rows.append([fac,basis,peak,day,raw,n,max(0.0,peak-n*units_per_resource)])
+for _,rr in dc_strategy.iterrows():
+    peak=float(rr.MaxDailyDCThroughputUnits); raw=peak/units_per_resource; n=round_f(raw)
+    resource_rows.append(['DC-GA-303',rr.ProductionStrategy,peak,int(rr.PeakDay),raw,n,max(0.0,peak-n*units_per_resource)])
+thr=pd.DataFrame(resource_rows,columns=['Facility','Basis','MaxDailyThroughputUnits','PeakDay','RawResources','Resources','ResidualUnitsIfRoundedDown'])
+thr.to_csv(OUT/'task9_15fc_throughput_resources.csv',index=False)
+
 sens=[]
-for var,vals in [('q',[.93,.98,1]),('r',[.90,.95,.99]),('e',[.85,.90,.95])]:
- for val in vals:
-  q=.98;r=.95;e=.90
-  if var=='q':q=val
-  if var=='r':r=val
-  if var=='e':e=val
-  cap=40*q*.90*r*e; n=sum(round_f(x/cap) for x in thr.MaxDailyThroughputUnits); annual=n*3.6*364+n*25.2
-  sens.append([var,val,cap,n,annual])
-sensitivity=pd.DataFrame(sens,columns=['Parameter','Value','UnitsPerResourceDay','TotalResources','AnnualOMPlusSetup'])
+base_peaks=[x for x in resource_rows if x[0]!='DC-GA-303']+[x for x in resource_rows if x[0]=='DC-GA-303' and x[1]=='Full smoothing with pre-production']
+for var,vals in [('q',[.93,.98,1.00]),('r',[.90,.95,.99]),('e',[.85,.90,.95])]:
+    for val in vals:
+        q,r,e=q0,r0,e0
+        if var=='q': q=val
+        if var=='r': r=val
+        if var=='e': e=val
+        upr=(shift_min/handling_min)*q*a0*r*e
+        n_total=sum(round_f(float(row[2])/upr) for row in base_peaks)
+        contracted_units=n_total*(shift_min/handling_min)
+        annual_contract=contracted_units*3.60*DAYS
+        setup=contracted_units*25.20
+        sens.append([var,val,upr,n_total,annual_contract,setup,annual_contract+setup])
+sensitivity=pd.DataFrame(sens,columns=['Parameter','Value','UnitsPerResourceDay','TotalResources','AnnualContractOM','OneTimeSetup','CapacityCost'])
+sensitivity.to_csv(OUT/'task9_15fc_sensitivity.csv',index=False)
+
+# Storage-tier input profile. Appendix 1 supplies only the base storage numeric rates;
+# seasonal and peak-and-extreme rates are absent, so a true lowest-cost three-tier split
+# cannot be numerically optimized from the supplied case data.
+storage_rows=[]
+for fc,sfc in sims.items():
+    prof=sfc.OnHand.to_numpy(); base_units=float(prof.min()); peak_units=float(prof.max())
+    base_cost=base_units*6.60*DAYS+base_units*46.20
+    storage_rows.append([fc,base_units,peak_units,peak_units-base_units,base_cost,'Seasonal/peak rates not supplied'])
+retained_dc=dc_target+full_pre_inv
+base_units=float(retained_dc.min()); peak_units=float(retained_dc.max())
+base_cost=base_units*6.60*DAYS+base_units*46.20
+storage_rows.append(['DC-GA-303',base_units,peak_units,peak_units-base_units,base_cost,'Seasonal/peak rates not supplied'])
+storage=pd.DataFrame(storage_rows,columns=['Facility','YearRoundBaseUnits','PeakInventoryUnits','VariableAboveBaseUnits','BaseTierAnnualPlusSetupCost','TierOptimizationStatus'])
+storage.to_csv(OUT/'task9_15fc_storage_tier_inputs.csv',index=False)
+
 params=[]; comp=[]
 for fc in FC15:
     avg=fc_mean[fc].mean(); interval=int(min(14,max(7,math.ceil(35/max(avg,1e-9)))))
