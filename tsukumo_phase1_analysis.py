@@ -522,18 +522,78 @@ network_targets={(Lw,lab):(forward_robust(mean_daily,sd_daily,Lw*7,z))
                  for Lw in [4,6,8] for lab,z in [('50',0),('68',1),('95',1.65),('99',2.33)]}
 net_target=network_targets[(6,'99')]
 dc_target=np.maximum(net_target-fc_total,0)
+# Task 8: AF production strategies based on the Task 7 6-week/99% network target.
+# Required AF production on day t equals customer demand plus the positive/negative
+# change in the desired network inventory target. Day 1 includes the initial target fill.
 pursuit=np.maximum(0,mean_daily+np.r_[net_target[0],np.diff(net_target)])
+
+def simulate_production(rate,initial_extra=0.0):
+    """Track production surplus/shortage relative to the pursuit requirement."""
+    bal=float(initial_extra); inv=np.zeros(DAYS); back=np.zeros(DAYS)
+    for t in range(DAYS):
+        bal += float(rate[t])-float(pursuit[t])
+        if bal>=0: inv[t]=bal
+        else: back[t]=-bal
+    return inv,back
+
+# Full smoothing uses the constant rate that balances annual production requirement.
 const=float(pursuit.sum()/DAYS)
-cum_gap=np.cumsum(pursuit-const); backlog=np.maximum(cum_gap,0); preprod=float(max(0,cum_gap.max()))
+full_rate=np.repeat(const,DAYS)
+full_inv,full_back=simulate_production(full_rate,0.0)
+full_pre=float(full_back.max())  # initial pre-production required to eliminate backlog
+full_pre_inv,full_pre_back=simulate_production(full_rate,full_pre)
+
+# Segmented smoothing: four 13-week seasonal blocks. Rate is constant within each
+# block and equals that block's average pursuit requirement; initial pre-production
+# is the minimum buffer needed to avoid a backlog across the full horizon.
+segments=[(0,91),(91,182),(182,273),(273,DAYS)]
 seg=np.zeros(DAYS)
-for a,b in [(0,91),(91,182),(182,273),(273,364)]: seg[a:b]=pursuit[a:b].mean()
-seg_gap=np.cumsum(pursuit-seg); seg_pre=float(max(0,seg_gap.max()))
+for a,b in segments: seg[a:b]=pursuit[a:b].mean()
+seg_inv0,seg_back0=simulate_production(seg,0.0)
+seg_pre=float(seg_back0.max())
+seg_inv,seg_back=simulate_production(seg,seg_pre)
+
+def backlog_duration(x):
+    return int(np.count_nonzero(np.asarray(x)>1e-9))
+
+task8_daily=pd.DataFrame({
+    'Day':np.arange(1,DAYS+1),
+    'PursuitRequirement':pursuit,
+    'FullSmoothingRate':full_rate,
+    'FullSmoothingBacklog':full_back,
+    'FullSmoothingExcessInventory':full_inv,
+    'FullSmoothingWithPreproductionInventory':full_pre_inv,
+    'SegmentedSmoothingRate':seg,
+    'SegmentedSmoothingInventory':seg_inv
+})
+task8_daily.to_csv(OUT/'task8_daily_production_profiles.csv',index=False)
+
 prod_compare=pd.DataFrame([
- ['Pursuit',pursuit.max(),0,0,dc_target.max()],
- ['Full smoothing - no preproduction',const,backlog.max(),0,dc_target.max()],
- ['Full smoothing - with preproduction',const,0,preprod,dc_target.max()+preprod],
- ['Segmented smoothing (4)',seg.max(),0,seg_pre,dc_target.max()+seg_pre]],columns=['Strategy','MaxDailyProduction','MaxBacklog','Preproduction','MaxDCInventory'])
-fig,ax=plt.subplots(figsize=(11,5)); ax.plot(pursuit,label='Pursuit',alpha=.75); ax.plot(np.repeat(const,DAYS),label='Full smoothing'); ax.plot(seg,label='Segmented'); ax.legend(); ax.set(title='Task 8 - Production strategy profiles',xlabel='Day',ylabel='Units/day'); fig.tight_layout(); fig.savefig(FIG/'task8_production.png',dpi=180); plt.close(fig)
+ ['Pursuit',float(pursuit.max()),0.0,0,0.0,float(dc_target.max())],
+ ['Full smoothing - no preproduction',const,float(full_back.max()),backlog_duration(full_back),0.0,float(dc_target.max()+full_inv.max())],
+ ['Full smoothing - with preproduction',const,0.0,0,full_pre,float(dc_target.max()+full_pre_inv.max())],
+ ['Segmented smoothing (4 x 13 weeks)',float(seg.max()),0.0,0,seg_pre,float(dc_target.max()+seg_inv.max())]
+],columns=['Strategy','MaxDailyProduction','MaxBacklog','BacklogDays','Preproduction','MaxDCInventory'])
+prod_compare.to_csv(OUT/'task8_production_strategy_comparison.csv',index=False)
+
+seg_summary=pd.DataFrame([
+ [i+1,a+1,b,float(seg[a]),float(seg_pre)] for i,(a,b) in enumerate(segments)
+],columns=['Segment','StartDay','EndDay','ConstantDailyProduction','InitialPreproduction'])
+seg_summary.to_csv(OUT/'task8_segmented_smoothing_summary.csv',index=False)
+
+fig,ax=plt.subplots(figsize=(11,5))
+ax.plot(np.arange(1,DAYS+1),pursuit,label='Pursuit requirement',alpha=.75)
+ax.plot(np.arange(1,DAYS+1),full_rate,label='Full smoothing')
+ax.plot(np.arange(1,DAYS+1),seg,label='Segmented smoothing')
+ax.legend(); ax.set(title='Task 8 - AF Production Strategy Profiles',xlabel='Day',ylabel='Units/day')
+ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task8_production_strategy_profiles.png',dpi=220); plt.close(fig)
+
+fig,ax=plt.subplots(figsize=(10,5))
+ax.plot(np.arange(1,DAYS+1),full_back,label='Full smoothing backlog (no pre-production)')
+ax.plot(np.arange(1,DAYS+1),full_pre_inv,label='Full smoothing anticipatory inventory')
+ax.plot(np.arange(1,DAYS+1),seg_inv,label='Segmented smoothing anticipatory inventory')
+ax.legend(); ax.set(title='Task 8 - Backlog and Anticipatory Inventory',xlabel='Day',ylabel='Units')
+ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task8_backlog_inventory_profiles.png',dpi=220); plt.close(fig)
 
 d99={fc:fc_mean[fc]+2.33*fc_sd[fc] for fc in FC15}
 def simulate_fc(fc,interval=7,threshold=14):
