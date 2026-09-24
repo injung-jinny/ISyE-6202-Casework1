@@ -164,7 +164,7 @@ task2_scenarios=pd.DataFrame({
     'TsukumoShareGrowth':sg,
     'AnnualTsukumoDemand':annual_scen
 })
-task2_daily=pd.DataFrame({'Day':np.arange(1,DAYS+1),'MeanDemand':mean_daily,'StdDemand':sd_daily})
+task2_daily=pd.DataFrame({'Day':np.arange(1,DAYS+1),'MeanDailyDemand':mean_daily,'StdDemand':sd_daily})
 for lab,z in [('68',1.0),('95',1.65),('99',2.33)]:
     task2_daily[f'RobustUpper{lab}']=mean_daily+z*sd_daily
 task2_scenarios.to_csv(OUT/'task2_scenarios.csv',index=False)
@@ -526,6 +526,7 @@ dc_target=np.maximum(net_target-fc_total,0)
 # Required AP production on day t equals customer demand plus the positive/negative
 # change in the desired network inventory target. The planning horizon is treated as a repeating seasonal cycle, so Day 1 changes from Day 364 to Day 1 rather than assuming zero opening inventory.
 target_change=np.diff(net_target,prepend=net_target[-1])
+assert np.isclose(target_change[0],net_target[0]-net_target[-1])
 pursuit=np.maximum(0,mean_daily+target_change)
 
 def simulate_production(rate,initial_extra=0.0):
