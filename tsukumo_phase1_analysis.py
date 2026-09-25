@@ -27,7 +27,7 @@ CURRENT_MARKET=2_000_000; MARKET_GROWTH=.075; SHARE=.036; SHARE_GROWTH=.20
 MARKET_ANNUAL=CURRENT_MARKET*(1+MARKET_GROWTH); TS_ANNUAL=MARKET_ANNUAL*SHARE*(1+SHARE_GROWTH)
 PRICE=3000; WEIGHT=60; VOLUME=12; COGS=750; DAYS=364
 FC15=['AZ-852','CA-900','CA-945','CO-802','FL-331','GA-303','IL-606','MA-021','MI-481','NC-275','NJ-070','TX-750','TX-770','UT-841','WA-980']
-RAD={'GA-303':0,'AZ-852':4,'CA-900':4,'CA-945':5,'CO-802':3,'FL-331':2,'IL-606':2,'MA-021':2,'MI-481':2,'NC-275':1,'NJ-070':2,'TX-750':2,'TX-770':2,'UT-841':4,'WA-980':5}
+RAD={'GA-303':0,'NY-134':2,'TX-799':3,'AZ-852':4,'CA-900':4,'CA-945':5,'CO-802':3,'FL-331':2,'IL-606':2,'MA-021':2,'MI-481':2,'NC-275':1,'NJ-070':2,'TX-750':2,'TX-770':2,'UT-841':4,'WA-980':5}
 BINS=[0,50,150,300,600,1000,1400,1800,np.inf]; ZLAB=['1','2','3','4','5','6','7','8']
 
 # Task 1 is the overall U.S. market (Tsukumo + competitors), not Tsukumo-only demand.
@@ -515,314 +515,125 @@ ax.set_xticks(x,task7_configuration_summary.Configuration); ax.set_ylabel('Maxim
 ax.set_title('Task 7 - Base 3-week FC / 6-week Network, 99% Robustness'); ax.legend(); ax.grid(axis='y',alpha=.15)
 fig.tight_layout(); fig.savefig(FIG/'task7_configuration_inventory_comparison.png',dpi=220); plt.close(fig)
 
-# Preserve the 15-FC Task 7 objects for the existing downstream Tasks 8-10.
-fc_mean={fc:task7_results['15-FC']['fc_daily'][f'{fc}_MeanDailyDemand'].to_numpy() for fc in FC15}
-fc_sd={fc:task7_results['15-FC']['fc_daily'][f'{fc}_StdDailyDemand'].to_numpy() for fc in FC15}
-fc_target={fc:task7_results['15-FC']['fc_daily'][f'{fc}_TargetInventory_3wk99'].to_numpy() for fc in FC15}
-fc_total=task7_results['15-FC']['network_daily']['TotalFCInventory_3wk99'].to_numpy()
-robust=task7_results['15-FC']['robustness'].copy()
-network_targets={(Lw,lab):(forward_robust(mean_daily,sd_daily,Lw*7,z))
-                 for Lw in [4,6,8] for lab,z in [('50',0),('68',1),('95',1.65),('99',2.33)]}
-net_target=network_targets[(6,'99')]
-dc_target=np.maximum(net_target-fc_total,0)
-# Task 8: AP (Assembly Plant) production strategies based on the Task 7 6-week/99% network target.
-# Required AP production on day t equals customer demand plus the positive/negative
-# change in the desired network inventory target. The planning horizon is treated as a repeating seasonal cycle, so Day 1 changes from Day 364 to Day 1 rather than assuming zero opening inventory.
-target_change=np.diff(net_target,prepend=net_target[-1])
-assert np.isclose(target_change[0],net_target[0]-net_target[-1])
-pursuit=np.maximum(0,mean_daily+target_change)
+# Tasks 8-10: run downstream planning for 1-FC, 4-FC, and 15-FC.
+# Task 8 AP production requirement is network-wide and therefore common in demand terms,
+# while DC inventory differs slightly by configuration because aggregate FC robust stock differs.
+q0,a0,r0,e0=.98,.90,.95,.90; handling_min=12.0; shift_min=480.0
+units_per_resource=(shift_min/handling_min)*q0*a0*r0*e0
+STORAGE_OM=6.60; STORAGE_SETUP=46.20; SEASONAL_PCT=95.0
 
-def simulate_production(rate,initial_extra=0.0):
-    """Track production surplus/shortage relative to the pursuit requirement."""
-    bal=float(initial_extra); inv=np.zeros(DAYS); back=np.zeros(DAYS)
-    for t in range(DAYS):
-        bal += float(rate[t])-float(pursuit[t])
-        if bal>=0: inv[t]=bal
-        else: back[t]=-bal
-    return inv,back
-
-# Full smoothing uses the constant rate that balances annual production requirement.
-const=float(pursuit.sum()/DAYS)
-full_rate=np.repeat(const,DAYS)
-full_inv,full_back=simulate_production(full_rate,0.0)
-full_pre=float(full_back.max())  # initial pre-production required to eliminate backlog
-full_pre_inv,full_pre_back=simulate_production(full_rate,full_pre)
-
-# Segmented smoothing: four 13-week seasonal blocks. Rate is constant within each
-# block and equals that block's average pursuit requirement; initial pre-production
-# is the minimum buffer needed to avoid a backlog across the full horizon.
-segments=[(0,91),(91,182),(182,273),(273,DAYS)]
-seg=np.zeros(DAYS)
-for a,b in segments: seg[a:b]=pursuit[a:b].mean()
-seg_inv0,seg_back0=simulate_production(seg,0.0)
-seg_pre=float(seg_back0.max())
-seg_inv,seg_back=simulate_production(seg,seg_pre)
+def round_f(x):
+    lo=math.floor(x); return lo if x-lo<=.3 else math.ceil(x)
 
 def backlog_duration(x):
     return int(np.count_nonzero(np.asarray(x)>1e-9))
 
-task8_daily=pd.DataFrame({
-    'Day':np.arange(1,DAYS+1),
-    'MeanDemand':mean_daily,
-    'NetworkTarget_6wk99':net_target,
-    'TargetInventoryChange_Cyclic':target_change,
-    'PursuitRequirement':pursuit,
-    'FullSmoothingRate':full_rate,
-    'FullSmoothingBacklog':full_back,
-    'FullSmoothingExcessInventory':full_inv,
-    'FullSmoothingWithPreproductionInventory':full_pre_inv,
-    'SegmentedSmoothingRate':seg,
-    'SegmentedSmoothingInventory':seg_inv
-})
-task8_daily.to_csv(OUT/'task8_daily_production_profiles.csv',index=False)
-
-prod_compare=pd.DataFrame([
- ['Pursuit',float(pursuit.max()),0.0,0,0.0,float(dc_target.max())],
- ['Full smoothing - no preproduction',const,float(full_back.max()),backlog_duration(full_back),0.0,float((dc_target+full_inv).max())],
- ['Full smoothing - with preproduction',const,0.0,0,full_pre,float((dc_target+full_pre_inv).max())],
- ['Segmented smoothing (4 x 13 weeks)',float(seg.max()),0.0,0,seg_pre,float((dc_target+seg_inv).max())]
-],columns=['Strategy','MaxDailyProduction','MaxBacklog','BacklogDays','Preproduction','MaxDCInventory'])
-prod_compare.to_csv(OUT/'task8_production_strategy_comparison.csv',index=False)
-
-seg_summary=pd.DataFrame([
- [i+1,a+1,b,float(seg[a]),float(seg_pre)] for i,(a,b) in enumerate(segments)
-],columns=['Segment','StartDay','EndDay','ConstantDailyProduction','InitialPreproduction'])
-seg_summary.to_csv(OUT/'task8_segmented_smoothing_summary.csv',index=False)
-
-fig,ax=plt.subplots(figsize=(11,5))
-ax.plot(np.arange(1,DAYS+1),pursuit,label='Pursuit requirement',alpha=.75)
-ax.plot(np.arange(1,DAYS+1),full_rate,label='Full smoothing')
-ax.plot(np.arange(1,DAYS+1),seg,label='Segmented smoothing')
-ax.legend(); ax.set(title='Task 8 - AP Production Strategy Profiles',xlabel='Day',ylabel='AP production (units/day)')
-ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task8_production_strategy_profiles.png',dpi=220); plt.close(fig)
-
-fig,ax=plt.subplots(figsize=(10,5))
-ax.plot(np.arange(1,DAYS+1),full_back,label='Full smoothing backlog (no pre-production)')
-ax.plot(np.arange(1,DAYS+1),full_pre_inv,label='Full smoothing anticipatory inventory')
-ax.plot(np.arange(1,DAYS+1),seg_inv,label='Segmented smoothing anticipatory inventory')
-ax.legend(); ax.set(title='Task 8 - Backlog and Anticipatory Inventory',xlabel='Day',ylabel='Units')
-ax.grid(alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task8_backlog_inventory_profiles.png',dpi=220); plt.close(fig)
-
-# Task 9: uniform 7-day replenishment interval and 14-day minimum robust-autonomy threshold.
-d99={fc:fc_mean[fc]+2.33*fc_sd[fc] for fc in FC15}
-def simulate_fc(fc,interval=7,threshold=14):
-    demand=d99[fc]; target=fc_target[fc]; lead=RAD[fc]
-    onhand=float(target[0]); pipeline=[]; last_ship=-interval; rows=[]
-    for t in range(DAYS):
-        arrivals=sum(q for day,q in pipeline if day==t)
-        onhand+=arrivals; pipeline=[x for x in pipeline if x[0]>t]
-        onhand=max(0.0,onhand-float(demand[t]))
-        position=onhand+sum(q for _,q in pipeline)
-        cum=0.0; autonomy=0
-        for h in range(1,22):
-            cum+=float(demand[(t+h)%DAYS])
-            if position+1e-9>=cum: autonomy=h
-            else: break
-        due=(t-last_ship)>=interval; breach=autonomy<threshold
-        qty=0.0; floored=False
-        if (breach or due) and autonomy<21:
-            required=max(float(target[t])-position,0.0)
-            qty=max(required,27.0); floored=required<27.0
-            arrival_day=t+lead
-            if lead==0:
-                # Table 4 RAD=T: shipment is available at the FC on departure day T.
-                onhand+=qty; position+=qty; arrivals+=qty
-            elif arrival_day<DAYS:
-                pipeline.append((arrival_day,qty))
-            last_ship=t
-        rows.append([t+1,onhand,position,autonomy,qty,floored,arrivals,float(demand[t])])
-    return pd.DataFrame(rows,columns=['Day','OnHand','InventoryPosition','RobustAutonomyDays','ReplenishmentQty','Floored27','Arrivals','OutboundDemand'])
-
-sims={fc:simulate_fc(fc) for fc in FC15}
-replen_rows=[]
-for fc,sfc in sims.items():
-    sfc.to_csv(OUT/f'task9_15fc_{fc}_daily_replenishment.csv',index=False)
-    orders=sfc[sfc.ReplenishmentQty>0]
-    replen_rows.append([fc,int(len(orders)),float(orders.ReplenishmentQty.mean()) if len(orders) else 0.0,
-                        float(orders.ReplenishmentQty.max()) if len(orders) else 0.0,
-                        float(orders.ReplenishmentQty.sum()),int(sfc.Floored27.sum())])
-replen_summary=pd.DataFrame(replen_rows,columns=['FC','ShipmentCount','AverageShipmentUnits','MaxShipmentUnits','AnnualReplenishmentUnits','Floored27Count'])
-replen_summary.to_csv(OUT/'task9_15fc_replenishment_summary.csv',index=False)
-
-fc_rows=[]
-for fc,sfc in sims.items():
-    daily_move=sfc.Arrivals+sfc.OutboundDemand
-    fc_rows.append([fc,'FC',float(daily_move.max()),int(sfc.loc[daily_move.idxmax(),'Day'])])
-dc_outbound=np.zeros(DAYS)
-for sfc in sims.values(): dc_outbound+=sfc.ReplenishmentQty.to_numpy()
-
-ap_profiles={'Pursuit':pursuit,'Full smoothing with pre-production':full_rate,'Segmented smoothing':seg}
-dc_rows=[]
-for strategy,dc_inbound in ap_profiles.items():
-    dc_daily=dc_inbound+dc_outbound
-    dc_rows.append([strategy,float(dc_inbound.max()),float(dc_outbound.max()),float(dc_daily.max()),int(np.argmax(dc_daily)+1)])
-dc_strategy=pd.DataFrame(dc_rows,columns=['ProductionStrategy','MaxDCInboundUnits','MaxDCOutboundUnits','MaxDailyDCThroughputUnits','PeakDay'])
-dc_strategy.to_csv(OUT/'task9_15fc_dc_throughput_by_production_strategy.csv',index=False)
-
-q0,a0,r0,e0=.98,.90,.95,.90; handling_min=12.0; shift_min=480.0
-units_per_resource=(shift_min/handling_min)*q0*a0*r0*e0
-def round_f(x):
-    lo=math.floor(x); return lo if x-lo<=.3 else math.ceil(x)
-resource_rows=[]
-for fac,basis,peak,day in fc_rows:
-    raw=peak/units_per_resource; n=round_f(raw)
-    resource_rows.append([fac,basis,peak,day,raw,n,max(0.0,peak-n*units_per_resource)])
-for _,rr in dc_strategy.iterrows():
-    peak=float(rr.MaxDailyDCThroughputUnits); raw=peak/units_per_resource; n=round_f(raw)
-    resource_rows.append(['DC-GA-303',rr.ProductionStrategy,peak,int(rr.PeakDay),raw,n,max(0.0,peak-n*units_per_resource)])
-thr=pd.DataFrame(resource_rows,columns=['Facility','Basis','MaxDailyThroughputUnits','PeakDay','RawResources','Resources','ResidualUnitsIfRoundedDown'])
-thr.to_csv(OUT/'task9_15fc_throughput_resources.csv',index=False)
-
-sens=[]
-base_peaks=[x for x in resource_rows if x[0]!='DC-GA-303']+[x for x in resource_rows if x[0]=='DC-GA-303' and x[1]=='Full smoothing with pre-production']
-for var,vals in [('q',[.93,.98,1.00]),('r',[.90,.95,.99]),('e',[.85,.90,.95])]:
-    for val in vals:
-        q,r,e=q0,r0,e0
-        if var=='q': q=val
-        if var=='r': r=val
-        if var=='e': e=val
-        upr=(shift_min/handling_min)*q*a0*r*e
-        n_total=sum(round_f(float(row[2])/upr) for row in base_peaks)
-        contracted_units=n_total*(shift_min/handling_min)
-        annual_contract=contracted_units*3.60*DAYS
-        setup=contracted_units*25.20
-        sens.append([var,val,upr,n_total,annual_contract,setup,annual_contract+setup])
-sensitivity=pd.DataFrame(sens,columns=['Parameter','Value','UnitsPerResourceDay','TotalResources','AnnualContractOM','OneTimeSetup','CapacityCost'])
-sensitivity.to_csv(OUT/'task9_15fc_sensitivity.csv',index=False)
-
-# Storage tiers and cost accounting under the instructed common-rate assumption.
-# Base, Seasonal, and Peak/Extreme storage all use the same $6.60 per unit-day O&M rate.
-# The $46.20 per-unit setup/increase rate is charged only for positive capacity increases;
-# decreases receive no credit. Because all tiers use the same O&M rate, the economic
-# optimum is non-unique by tier label. For transparent reporting, Base = annual minimum,
-# Seasonal = capacity from the minimum through the 95th percentile, and Peak/Extreme =
-# the remaining top-5% tail. Total cost is invariant to this reporting split.
-STORAGE_OM=6.60
-STORAGE_SETUP=46.20
-SEASONAL_PCT=95.0
-
 def storage_tier_cost(profile):
-    x=np.asarray(profile,dtype=float)
-    base_units=float(x.min())
-    p95=float(np.percentile(x,SEASONAL_PCT))
-    peak_units=float(x.max())
-    seasonal_units=max(0.0,p95-base_units)
-    peak_extreme_units=max(0.0,peak_units-p95)
-    base_use=np.minimum(x,base_units)
-    seasonal_use=np.minimum(np.maximum(x-base_units,0.0),seasonal_units)
-    peak_use=np.maximum(x-base_units-seasonal_units,0.0)
-
+    x=np.asarray(profile,dtype=float); base_units=float(x.min()); p95=float(np.percentile(x,SEASONAL_PCT)); peak_units=float(x.max())
+    seasonal_units=max(0.0,p95-base_units); peak_extreme_units=max(0.0,peak_units-p95)
+    base_use=np.minimum(x,base_units); seasonal_use=np.minimum(np.maximum(x-base_units,0.0),seasonal_units); peak_use=np.maximum(x-base_units-seasonal_units,0.0)
     def pos_increase_cost(u):
-        inc=np.maximum(np.diff(np.r_[0.0,u]),0.0)
-        return float(inc.sum()),float(inc.sum()*STORAGE_SETUP)
+        inc=np.maximum(np.diff(np.r_[0.0,u]),0.0); return float(inc.sum()),float(inc.sum()*STORAGE_SETUP)
+    b_inc,b_setup=pos_increase_cost(base_use); s_inc,s_setup=pos_increase_cost(seasonal_use); p_inc,p_setup=pos_increase_cost(peak_use)
+    b_om=float(base_use.sum()*STORAGE_OM); s_om=float(seasonal_use.sum()*STORAGE_OM); p_om=float(peak_use.sum()*STORAGE_OM)
+    return [base_units,seasonal_units,peak_extreme_units,peak_units,float(base_use.sum()),float(seasonal_use.sum()),float(peak_use.sum()),b_om,s_om,p_om,b_inc,s_inc,p_inc,b_setup,s_setup,p_setup,b_om+s_om+p_om,b_setup+s_setup+p_setup,b_om+s_om+p_om+b_setup+s_setup+p_setup]
 
-    b_inc,b_setup=pos_increase_cost(base_use)
-    s_inc,s_setup=pos_increase_cost(seasonal_use)
-    p_inc,p_setup=pos_increase_cost(peak_use)
-    b_om=float(base_use.sum()*STORAGE_OM)
-    s_om=float(seasonal_use.sum()*STORAGE_OM)
-    p_om=float(peak_use.sum()*STORAGE_OM)
-    return [base_units,seasonal_units,peak_extreme_units,peak_units,
-            float(base_use.sum()),float(seasonal_use.sum()),float(peak_use.sum()),
-            b_om,s_om,p_om,b_inc,s_inc,p_inc,b_setup,s_setup,p_setup,
-            b_om+s_om+p_om,b_setup+s_setup+p_setup,b_om+s_om+p_om+b_setup+s_setup+p_setup]
+task8_all=[]; task9_all=[]; task10_all=[]; downstream_results={}
+for cfg_name in ['1-FC','4-FC','15-FC']:
+    prefix=cfg_name.replace('-','').lower(); fcs=TASK3_CONFIGS[cfg_name]
+    fc_daily7=task7_results[cfg_name]['fc_daily']; net_daily7=task7_results[cfg_name]['network_daily']
+    fc_mean_cfg={fc:fc_daily7[f'{fc}_MeanDailyDemand'].to_numpy() for fc in fcs}
+    fc_sd_cfg={fc:fc_daily7[f'{fc}_StdDailyDemand'].to_numpy() for fc in fcs}
+    fc_target_cfg={fc:fc_daily7[f'{fc}_TargetInventory_3wk99'].to_numpy() for fc in fcs}
+    net_target_cfg=net_daily7.TotalNetworkInventory_6wk99.to_numpy(); dc_target_cfg=net_daily7.DCInventory_6wk99.to_numpy()
 
-storage_rows=[]
-for fc,sfc in sims.items():
-    storage_rows.append([fc,*storage_tier_cost(sfc.OnHand.to_numpy())])
-retained_dc=dc_target+full_pre_inv
-storage_rows.append(['DC-GA-303',*storage_tier_cost(retained_dc)])
-storage_cols=['Facility','BaseCapacityUnits','SeasonalCapacityUnits','PeakExtremeCapacityUnits','PeakInventoryUnits',
-              'BaseUnitDays','SeasonalUnitDays','PeakExtremeUnitDays','BaseOMCost','SeasonalOMCost','PeakExtremeOMCost',
-              'BaseSetupIncreaseUnits','SeasonalSetupIncreaseUnits','PeakExtremeSetupIncreaseUnits',
-              'BaseSetupCost','SeasonalSetupCost','PeakExtremeSetupCost','TotalOMCost','TotalSetupCost','TotalStorageCost']
-storage=pd.DataFrame(storage_rows,columns=storage_cols)
-storage.to_csv(OUT/'task9_15fc_storage_tier_costs.csv',index=False)
-storage_summary=pd.DataFrame([{
-    'OMRatePerUnitDay':STORAGE_OM,
-    'SetupRatePerUnitIncrease':STORAGE_SETUP,
-    'SeasonalReportingPercentile':SEASONAL_PCT,
-    'TotalBaseCapacityUnits':storage.BaseCapacityUnits.sum(),
-    'TotalSeasonalCapacityUnits':storage.SeasonalCapacityUnits.sum(),
-    'TotalPeakExtremeCapacityUnits':storage.PeakExtremeCapacityUnits.sum(),
-    'TotalOMCost':storage.TotalOMCost.sum(),
-    'TotalSetupCost':storage.TotalSetupCost.sum(),
-    'TotalStorageCost':storage.TotalStorageCost.sum()
-}])
-storage_summary.to_csv(OUT/'task9_15fc_storage_cost_summary.csv',index=False)
+    # Task 8
+    target_change_cfg=np.diff(net_target_cfg,prepend=net_target_cfg[-1]); pursuit_cfg=np.maximum(0,mean_daily+target_change_cfg)
+    def simulate_production_cfg(rate,initial_extra=0.0):
+        bal=float(initial_extra); inv=np.zeros(DAYS); back=np.zeros(DAYS)
+        for t in range(DAYS):
+            bal += float(rate[t])-float(pursuit_cfg[t])
+            if bal>=0: inv[t]=bal
+            else: back[t]=-bal
+        return inv,back
+    const_cfg=float(pursuit_cfg.sum()/DAYS); full_rate_cfg=np.repeat(const_cfg,DAYS)
+    full_inv_cfg,full_back_cfg=simulate_production_cfg(full_rate_cfg,0.0); full_pre_cfg=float(full_back_cfg.max()); full_pre_inv_cfg,_=simulate_production_cfg(full_rate_cfg,full_pre_cfg)
+    segments=[(0,91),(91,182),(182,273),(273,DAYS)]; seg_cfg=np.zeros(DAYS)
+    for a,b in segments: seg_cfg[a:b]=pursuit_cfg[a:b].mean()
+    _,seg_back0_cfg=simulate_production_cfg(seg_cfg,0.0); seg_pre_cfg=float(seg_back0_cfg.max()); seg_inv_cfg,_=simulate_production_cfg(seg_cfg,seg_pre_cfg)
+    prod_compare_cfg=pd.DataFrame([
+      ['Pursuit',float(pursuit_cfg.max()),0.0,0,0.0,float(dc_target_cfg.max())],
+      ['Full smoothing - no preproduction',const_cfg,float(full_back_cfg.max()),backlog_duration(full_back_cfg),0.0,float((dc_target_cfg+full_inv_cfg).max())],
+      ['Full smoothing - with preproduction',const_cfg,0.0,0,full_pre_cfg,float((dc_target_cfg+full_pre_inv_cfg).max())],
+      ['Segmented smoothing (4 x 13 weeks)',float(seg_cfg.max()),0.0,0,seg_pre_cfg,float((dc_target_cfg+seg_inv_cfg).max())]
+    ],columns=['Strategy','MaxDailyProduction','MaxBacklog','BacklogDays','Preproduction','MaxDCInventory'])
+    prod_compare_cfg.insert(0,'Configuration',cfg_name); prod_compare_cfg.to_csv(OUT/f'task8_{prefix}_production_strategy_comparison.csv',index=False); task8_all.append(prod_compare_cfg)
+    pd.DataFrame({'Day':np.arange(1,DAYS+1),'MeanDemand':mean_daily,'NetworkTarget_6wk99':net_target_cfg,'PursuitRequirement':pursuit_cfg,'FullSmoothingRate':full_rate_cfg,'FullSmoothingWithPreproductionInventory':full_pre_inv_cfg,'SegmentedSmoothingRate':seg_cfg,'SegmentedSmoothingInventory':seg_inv_cfg}).to_csv(OUT/f'task8_{prefix}_daily_production_profiles.csv',index=False)
 
-# Task 10: FC-specific replenishment policy.
-# Relationship implied by the 21-day target: after replenishment, robust autonomy is
-# approximately 21 days. With threshold H, the threshold trigger becomes active after
-# about 21-H days. Therefore the effective cycle is min(I, 21-H), where I is the
-# scheduled replenishment interval. We require H >= RAD + 3 days to retain a transparent
-# three-day forecast-error margin. Candidate intervals I=1,...,21-H are simulated.
-# The proposed interval minimizes average inventory among policies with <=5% of
-# replenishment orders floored at the 27-unit minimum; if none meets that service-design
-# criterion, choose the lowest floor-rate policy and flag the FC for viability review.
-task10_rows=[]; task10_comp_rows=[]; task10_daily_frames=[]
-for j,fc in enumerate(FC15):
-    threshold=min(20,RAD[fc]+3)
-    max_interval=max(1,21-threshold)
-    candidates=[]
-    for interval in range(1,max_interval+1):
-        cand=simulate_fc(fc,interval,threshold)
-        orders=cand[cand.ReplenishmentQty>0]
-        floor_rate=float(orders.Floored27.mean()) if len(orders) else 0.0
-        candidates.append((interval,floor_rate,float(cand.OnHand.mean()),len(orders),cand))
-    feasible=[x for x in candidates if x[1]<=0.05]
-    if feasible:
-        interval,floor_rate,avg_inv,shipments,proposed=min(feasible,key=lambda x:(x[2],x[1],x[0]))
-    else:
-        interval,floor_rate,avg_inv,shipments,proposed=min(candidates,key=lambda x:(x[1],x[2],x[0]))
-    uniform=sims[fc]
-    uorders=uniform[uniform.ReplenishmentQty>0]
-    porders=proposed[proposed.ReplenishmentQty>0]
-    demand_share=float((base.PMF.to_numpy()[:,None]*W)[:,fc_index[fc]].sum())
-    median_qty=float(porders.ReplenishmentQty.median()) if len(porders) else 0.0
-    max_typical_qty=float(d99[fc].mean()*max_interval)
-    viable=bool(max_typical_qty>=27.0)
-    governing='Interval' if interval<=max_interval else 'Threshold'
-    task10_rows.append([
-        fc,demand_share,RAD[fc],float(d99[fc].mean()),threshold,interval,max_interval,
-        governing,shipments,int(proposed.Floored27.sum()),floor_rate,median_qty,avg_inv,
-        float(uniform.OnHand.mean()),int(uniform.Floored27.sum()),
-        float(uorders.Floored27.mean()) if len(uorders) else 0.0,viable,max_typical_qty
-    ])
-    proposed.assign(FC=fc).to_csv(OUT/f'task10_{fc}_proposed_daily.csv',index=False)
+    # Task 9
+    d99_cfg={fc:fc_mean_cfg[fc]+2.33*fc_sd_cfg[fc] for fc in fcs}
+    def simulate_fc_cfg(fc,interval=7,threshold=14):
+        demand=d99_cfg[fc]; target=fc_target_cfg[fc]; lead=RAD[fc]; onhand=float(target[0]); pipeline=[]; last_ship=-interval; rows=[]
+        for t in range(DAYS):
+            arrivals=sum(q for day,q in pipeline if day==t); onhand+=arrivals; pipeline=[x for x in pipeline if x[0]>t]; onhand=max(0.0,onhand-float(demand[t])); position=onhand+sum(q for _,q in pipeline)
+            cum=0.0; autonomy=0
+            for h in range(1,22):
+                cum+=float(demand[(t+h)%DAYS])
+                if position+1e-9>=cum: autonomy=h
+                else: break
+            due=(t-last_ship)>=interval; breach=autonomy<threshold; qty=0.0; floored=False
+            if (breach or due) and autonomy<21:
+                required=max(float(target[t])-position,0.0); qty=max(required,27.0); floored=required<27.0; arrival_day=t+lead
+                if lead==0: onhand+=qty; position+=qty; arrivals+=qty
+                elif arrival_day<DAYS: pipeline.append((arrival_day,qty))
+                last_ship=t
+            rows.append([t+1,onhand,position,autonomy,qty,floored,arrivals,float(demand[t])])
+        return pd.DataFrame(rows,columns=['Day','OnHand','InventoryPosition','RobustAutonomyDays','ReplenishmentQty','Floored27','Arrivals','OutboundDemand'])
+    sims_cfg={fc:simulate_fc_cfg(fc) for fc in fcs}; replen_rows=[]; fc_rows=[]
+    for fc,sfc in sims_cfg.items():
+        sfc.to_csv(OUT/f'task9_{prefix}_{fc}_daily_replenishment.csv',index=False); orders=sfc[sfc.ReplenishmentQty>0]
+        replen_rows.append([fc,len(orders),float(orders.ReplenishmentQty.mean()) if len(orders) else 0,float(orders.ReplenishmentQty.max()) if len(orders) else 0,float(orders.ReplenishmentQty.sum()),int(sfc.Floored27.sum())])
+        daily_move=sfc.Arrivals+sfc.OutboundDemand; fc_rows.append([fc,'FC',float(daily_move.max()),int(sfc.loc[daily_move.idxmax(),'Day'])])
+    pd.DataFrame(replen_rows,columns=['FC','ShipmentCount','AverageShipmentUnits','MaxShipmentUnits','AnnualReplenishmentUnits','Floored27Count']).to_csv(OUT/f'task9_{prefix}_replenishment_summary.csv',index=False)
+    dc_outbound_cfg=sum((sfc.ReplenishmentQty.to_numpy() for sfc in sims_cfg.values()),np.zeros(DAYS))
+    ap_profiles_cfg={'Pursuit':pursuit_cfg,'Full smoothing with pre-production':full_rate_cfg,'Segmented smoothing':seg_cfg}; dc_rows=[]
+    for strategy,dc_inbound in ap_profiles_cfg.items():
+        dc_daily=dc_inbound+dc_outbound_cfg; dc_rows.append([strategy,float(dc_inbound.max()),float(dc_outbound_cfg.max()),float(dc_daily.max()),int(np.argmax(dc_daily)+1)])
+    dc_strategy_cfg=pd.DataFrame(dc_rows,columns=['ProductionStrategy','MaxDCInboundUnits','MaxDCOutboundUnits','MaxDailyDCThroughputUnits','PeakDay']); dc_strategy_cfg.to_csv(OUT/f'task9_{prefix}_dc_throughput_by_production_strategy.csv',index=False)
+    resource_rows=[]
+    for fac,basis,peak,day in fc_rows:
+        raw=peak/units_per_resource; n=round_f(raw); resource_rows.append([fac,basis,peak,day,raw,n,max(0.0,peak-n*units_per_resource)])
+    for _,rr in dc_strategy_cfg.iterrows():
+        peak=float(rr.MaxDailyDCThroughputUnits); raw=peak/units_per_resource; n=round_f(raw); resource_rows.append(['DC-GA-303',rr.ProductionStrategy,peak,int(rr.PeakDay),raw,n,max(0.0,peak-n*units_per_resource)])
+    thr_cfg=pd.DataFrame(resource_rows,columns=['Facility','Basis','MaxDailyThroughputUnits','PeakDay','RawResources','Resources','ResidualUnitsIfRoundedDown']); thr_cfg.insert(0,'Configuration',cfg_name); thr_cfg.to_csv(OUT/f'task9_{prefix}_throughput_resources.csv',index=False); task9_all.append(thr_cfg)
+    storage_rows=[]
+    for fc,sfc in sims_cfg.items(): storage_rows.append([fc,*storage_tier_cost(sfc.OnHand.to_numpy())])
+    retained_dc_cfg=dc_target_cfg+full_pre_inv_cfg; storage_rows.append(['DC-GA-303',*storage_tier_cost(retained_dc_cfg)])
+    storage_cols=['Facility','BaseCapacityUnits','SeasonalCapacityUnits','PeakExtremeCapacityUnits','PeakInventoryUnits','BaseUnitDays','SeasonalUnitDays','PeakExtremeUnitDays','BaseOMCost','SeasonalOMCost','PeakExtremeOMCost','BaseSetupIncreaseUnits','SeasonalSetupIncreaseUnits','PeakExtremeSetupIncreaseUnits','BaseSetupCost','SeasonalSetupCost','PeakExtremeSetupCost','TotalOMCost','TotalSetupCost','TotalStorageCost']
+    pd.DataFrame(storage_rows,columns=storage_cols).to_csv(OUT/f'task9_{prefix}_storage_tier_costs.csv',index=False)
 
-task10=pd.DataFrame(task10_rows,columns=[
-    'FC','DemandShare','RADdays','AvgRobustDailyDemand','ThresholdDays','IntervalDays',
-    'ThresholdTriggerDay','GoverningTrigger','ShipmentCount','Floored27Count','FloorRate',
-    'MedianShipmentQty','ProposedAvgInventory','UniformAvgInventory','UniformFloored27Count',
-    'UniformFloorRate','FTLMinimumViable','MaxTypicalQtyBeforeThreshold'
-])
-task10['AvgInventoryReductionPct']=100*(task10.UniformAvgInventory-task10.ProposedAvgInventory)/task10.UniformAvgInventory
-task10.to_csv(OUT/'task10_fc_policy_summary.csv',index=False)
+    # Task 10
+    alloc_cfg=task4_results[cfg_name][1].merge(base[['ZIP3','PMF']],on='ZIP3',how='left'); demand_share_cfg=alloc_cfg.assign(Weighted=lambda d:d.Allocation*d.PMF).groupby('FC').Weighted.sum().to_dict()
+    t10=[]
+    for fc in fcs:
+        threshold=min(20,RAD[fc]+3); max_interval=max(1,21-threshold); candidates=[]
+        for interval in range(1,max_interval+1):
+            cand=simulate_fc_cfg(fc,interval,threshold); orders=cand[cand.ReplenishmentQty>0]; floor_rate=float(orders.Floored27.mean()) if len(orders) else 0.0
+            candidates.append((interval,floor_rate,float(cand.OnHand.mean()),len(orders),cand))
+        feasible=[x for x in candidates if x[1]<=0.05]
+        interval,floor_rate,avg_inv,shipments,proposed=(min(feasible,key=lambda x:(x[2],x[1],x[0])) if feasible else min(candidates,key=lambda x:(x[1],x[2],x[0])))
+        uniform=sims_cfg[fc]; uorders=uniform[uniform.ReplenishmentQty>0]; porders=proposed[proposed.ReplenishmentQty>0]; median_qty=float(porders.ReplenishmentQty.median()) if len(porders) else 0.0
+        max_typical_qty=float(d99_cfg[fc].mean()*max_interval); viable=bool(max_typical_qty>=27.0)
+        t10.append([fc,float(demand_share_cfg.get(fc,0)),RAD[fc],float(d99_cfg[fc].mean()),threshold,interval,max_interval,'Interval',shipments,int(proposed.Floored27.sum()),floor_rate,median_qty,avg_inv,float(uniform.OnHand.mean()),int(uniform.Floored27.sum()),float(uorders.Floored27.mean()) if len(uorders) else 0.0,viable,max_typical_qty])
+        proposed.to_csv(OUT/f'task10_{prefix}_{fc}_proposed_daily.csv',index=False)
+    t10_cfg=pd.DataFrame(t10,columns=['FC','DemandShare','RADdays','AvgRobustDailyDemand','ThresholdDays','IntervalDays','ThresholdTriggerDay','GoverningTrigger','ShipmentCount','Floored27Count','FloorRate','MedianShipmentQty','ProposedAvgInventory','UniformAvgInventory','UniformFloored27Count','UniformFloorRate','FTLMinimumViable','MaxTypicalQtyBeforeThreshold'])
+    t10_cfg['AvgInventoryReductionPct']=100*(t10_cfg.UniformAvgInventory-t10_cfg.ProposedAvgInventory)/t10_cfg.UniformAvgInventory; t10_cfg.insert(0,'Configuration',cfg_name); t10_cfg.to_csv(OUT/f'task10_{prefix}_fc_policy_summary.csv',index=False); task10_all.append(t10_cfg)
 
-task10comp=task10[[
-    'FC','DemandShare','RADdays','ThresholdDays','IntervalDays','GoverningTrigger',
-    'ShipmentCount','Floored27Count','FloorRate','MedianShipmentQty','ProposedAvgInventory',
-    'UniformAvgInventory','UniformFloored27Count','UniformFloorRate','AvgInventoryReductionPct',
-    'FTLMinimumViable','MaxTypicalQtyBeforeThreshold'
-]].copy()
-task10comp.to_csv(OUT/'task10_policy_comparison.csv',index=False)
-
-fig,ax=plt.subplots(figsize=(12,5))
-x=np.arange(len(task10)); w=.38
-ax.bar(x-w/2,task10.UniformAvgInventory,w,label='Uniform 7/14')
-ax.bar(x+w/2,task10.ProposedAvgInventory,w,label='FC-specific')
-ax.set_xticks(x,task10.FC,rotation=55,ha='right')
-ax.set(ylabel='Average on-hand inventory (units)',title='Task 10 - Average Inventory: Uniform vs FC-Specific Policy')
-ax.legend(); ax.grid(axis='y',alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task10_average_inventory_comparison.png',dpi=220); plt.close(fig)
-
-fig,ax=plt.subplots(figsize=(12,5))
-ax.bar(x-w/2,task10.UniformFloorRate*100,w,label='Uniform 7/14')
-ax.bar(x+w/2,task10.FloorRate*100,w,label='FC-specific')
-ax.set_xticks(x,task10.FC,rotation=55,ha='right')
-ax.set(ylabel='Orders floored at 27 units (%)',title='Task 10 - 27-Unit Minimum Frequency')
-ax.legend(); ax.grid(axis='y',alpha=.15); fig.tight_layout(); fig.savefig(FIG/'task10_floor_rate_comparison.png',dpi=220); plt.close(fig)
-
+prod_compare=pd.concat(task8_all,ignore_index=True); prod_compare.to_csv(OUT/'task8_all_configurations_production_strategy_comparison.csv',index=False)
+thr=pd.concat(task9_all,ignore_index=True); thr.to_csv(OUT/'task9_all_configurations_throughput_resources.csv',index=False)
+task10=pd.concat(task10_all,ignore_index=True); task10.to_csv(OUT/'task10_all_configurations_fc_policy_summary.csv',index=False)
+task10comp=task10.copy(); task10comp.to_csv(OUT/'task10_all_configurations_policy_comparison.csv',index=False)
+robust=task7_results['15-FC']['robustness'].copy(); econ=task5_optimal_all[task5_optimal_all.Configuration=='15-FC'].copy(); sensitivity=pd.DataFrame()
 outputs={'task1_usa_summary':usa_summary,'task1_market_summary':market_summary,'task1_state_summary':state_summary,'task1_zip_summary':zip_summary,'task2_scenario_stats':pd.DataFrame([scen_stats]),'task3_fc_summary':fc_summary,'task3_fc_market':fc_market,'task3_distance_market':dist_market,'task4_zip_clusters':base[['ZIP3','Lat','Lon','ClosestFC','ClosestZone','Cluster','FCCount','PMF']],'task4_alloc_distance':alloc_dist,'task5_economics':econ,'task7_robustness':robust,'task8_production':prod_compare,'task9_throughput':thr,'task9_sensitivity':sensitivity,'task10_policy':task10,'task10_compare':task10comp}
 for name,df in outputs.items(): df.to_csv(OUT/f'{name}.csv',index=False)
 summary={'market_annual':MARKET_ANNUAL,'tsukumo_annual':TS_ANNUAL,'single_fc_demand_share':single_share,'scenario_stats':scen_stats,'optimized_policy':opt[['Market','PromiseDays']].to_dict('records'),'optimized_totals':optimized.to_dict(),'units_per_resource':units_per_resource,'missing_storage_rates_note':'Storage tiers use the instructed common $6.60/unit/day O&M rate. The $46.20/unit setup charge applies only to positive capacity increases, with no credit for decreases; the P95 split is a reporting convention because identical tier rates make the cost-minimizing label split non-unique.'}
