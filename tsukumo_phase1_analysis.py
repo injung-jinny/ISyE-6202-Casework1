@@ -633,6 +633,63 @@ prod_compare=pd.concat(task8_all,ignore_index=True); prod_compare.to_csv(OUT/'ta
 thr=pd.concat(task9_all,ignore_index=True); thr.to_csv(OUT/'task9_all_configurations_throughput_resources.csv',index=False)
 task10=pd.concat(task10_all,ignore_index=True); task10.to_csv(OUT/'task10_all_configurations_fc_policy_summary.csv',index=False)
 task10comp=task10.copy(); task10comp.to_csv(OUT/'task10_all_configurations_policy_comparison.csv',index=False)
+
+# Submission-ready figures for Tasks 8-10.
+# Keep all generated PNG files in the same tsukumo_outputs/figures directory used by Tasks 1-7.
+# Task 8: production strategy capacity comparison across network configurations.
+fig,ax=plt.subplots(figsize=(9,5))
+strategies=list(prod_compare.Strategy.drop_duplicates())
+x=np.arange(len(strategies)); width=.24
+for i,cfg_name in enumerate(['1-FC','4-FC','15-FC']):
+    d=prod_compare[prod_compare.Configuration==cfg_name].set_index('Strategy').reindex(strategies)
+    ax.bar(x+(i-1)*width,d.MaxDailyProduction,width,label=cfg_name)
+ax.set_xticks(x,strategies,rotation=15,ha='right'); ax.set_ylabel('Maximum daily AP production (units/day)')
+ax.set_title('Task 8 - AP Production Capacity by Strategy and Configuration'); ax.legend(); ax.grid(axis='y',alpha=.15)
+fig.tight_layout(); fig.savefig(FIG/'task8_production_strategy_capacity_comparison.png',dpi=220,bbox_inches='tight'); plt.close(fig)
+
+fig,ax=plt.subplots(figsize=(9,5))
+for cfg_name in ['1-FC','4-FC','15-FC']:
+    d=prod_compare[prod_compare.Configuration==cfg_name]
+    ax.plot(d.Strategy,d.MaxDCInventory,marker='o',label=cfg_name)
+ax.set_ylabel('Maximum DC inventory (units)'); ax.set_title('Task 8 - Maximum DC Inventory by Production Strategy')
+ax.tick_params(axis='x',rotation=15); ax.legend(); ax.grid(alpha=.15)
+fig.tight_layout(); fig.savefig(FIG/'task8_dc_inventory_by_strategy.png',dpi=220,bbox_inches='tight'); plt.close(fig)
+
+# Task 9: FC throughput and DC throughput under the alternative AP strategies.
+fig,ax=plt.subplots(figsize=(10,6))
+fc_thr=thr[thr.Basis=='FC'].copy()
+order=fc_thr.groupby('Facility').MaxDailyThroughputUnits.max().sort_values(ascending=True).index
+for cfg_name in ['1-FC','4-FC','15-FC']:
+    d=fc_thr[fc_thr.Configuration==cfg_name].set_index('Facility').reindex(order)
+    ax.scatter(d.MaxDailyThroughputUnits,order,label=cfg_name,s=42)
+ax.set_xlabel('Peak daily FC throughput (units/day)'); ax.set_title('Task 9 - Peak FC Throughput by Configuration')
+ax.legend(); ax.grid(alpha=.15)
+fig.tight_layout(); fig.savefig(FIG/'task9_fc_peak_throughput_all_configurations.png',dpi=220,bbox_inches='tight'); plt.close(fig)
+
+fig,ax=plt.subplots(figsize=(9,5)); dc_thr=thr[thr.Facility=='DC-GA-303'].copy()
+strategies_dc=list(dc_thr.Basis.drop_duplicates()); x=np.arange(len(strategies_dc)); width=.24
+for i,cfg_name in enumerate(['1-FC','4-FC','15-FC']):
+    d=dc_thr[dc_thr.Configuration==cfg_name].set_index('Basis').reindex(strategies_dc)
+    ax.bar(x+(i-1)*width,d.MaxDailyThroughputUnits,width,label=cfg_name)
+ax.set_xticks(x,strategies_dc,rotation=15,ha='right'); ax.set_ylabel('Peak DC throughput (units/day)')
+ax.set_title('Task 9 - DC Peak Throughput by AP Production Strategy'); ax.legend(); ax.grid(axis='y',alpha=.15)
+fig.tight_layout(); fig.savefig(FIG/'task9_dc_peak_throughput_by_strategy.png',dpi=220,bbox_inches='tight'); plt.close(fig)
+
+# Task 10: FC-specific interval/threshold policy and inventory effect.
+fig,ax=plt.subplots(figsize=(11,6)); t10_15=task10[task10.Configuration=='15-FC'].sort_values('DemandShare',ascending=False)
+x=np.arange(len(t10_15)); width=.38
+ax.bar(x-width/2,t10_15.IntervalDays,width,label='Replenishment interval')
+ax.bar(x+width/2,t10_15.ThresholdDays,width,label='Minimum robust autonomy')
+ax.set_xticks(x,t10_15.FC,rotation=45,ha='right'); ax.set_ylabel('Days')
+ax.set_title('Task 10 - 15-FC Replenishment Interval and Robust Autonomy Threshold'); ax.legend(); ax.grid(axis='y',alpha=.15)
+fig.tight_layout(); fig.savefig(FIG/'task10_15fc_interval_threshold_policy.png',dpi=220,bbox_inches='tight'); plt.close(fig)
+
+fig,ax=plt.subplots(figsize=(11,6)); x=np.arange(len(t10_15)); width=.38
+ax.bar(x-width/2,t10_15.UniformAvgInventory,width,label='Uniform 7-day / 14-day policy')
+ax.bar(x+width/2,t10_15.ProposedAvgInventory,width,label='FC-specific proposed policy')
+ax.set_xticks(x,t10_15.FC,rotation=45,ha='right'); ax.set_ylabel('Average on-hand inventory (units)')
+ax.set_title('Task 10 - Average FC Inventory: Uniform vs Proposed Policy'); ax.legend(); ax.grid(axis='y',alpha=.15)
+fig.tight_layout(); fig.savefig(FIG/'task10_15fc_inventory_policy_comparison.png',dpi=220,bbox_inches='tight'); plt.close(fig)
 robust=task7_results['15-FC']['robustness'].copy(); econ=task5_optimal_all[task5_optimal_all.Configuration=='15-FC'].copy(); sensitivity=pd.DataFrame()
 outputs={'task1_usa_summary':usa_summary,'task1_market_summary':market_summary,'task1_state_summary':state_summary,'task1_zip_summary':zip_summary,'task2_scenario_stats':pd.DataFrame([scen_stats]),'task3_fc_summary':fc_summary,'task3_fc_market':fc_market,'task3_distance_market':dist_market,'task4_zip_clusters':base[['ZIP3','Lat','Lon','ClosestFC','ClosestZone','Cluster','FCCount','PMF']],'task4_alloc_distance':alloc_dist,'task5_economics':econ,'task7_robustness':robust,'task8_production':prod_compare,'task9_throughput':thr,'task9_sensitivity':sensitivity,'task10_policy':task10,'task10_compare':task10comp}
 for name,df in outputs.items(): df.to_csv(OUT/f'{name}.csv',index=False)
